@@ -35,9 +35,11 @@ export function checkText(text, extension) {
       const tokens = [];
       let index = 0;
       let gap = false;
+      let unquotedUrl = false;
       while (index < value.length) {
         if (/\s/.test(value[index])) { index++; gap = true; continue; }
         if (value.startsWith('/*', index)) {
+          if (unquotedUrl) throw new Error('comment opener inside unquoted URL');
           const end = value.indexOf('*/', index + 2);
           if (end < 0) throw new Error('unterminated comment');
           index = end + 2;
@@ -79,6 +81,11 @@ export function checkText(text, extension) {
           if (quote === '\\') throw new Error('unsupported escape outside a string');
           text = value[index++];
         }
+        if (type === 'symbol' && text === '(' && tokens.at(-1)?.text.toLowerCase() === 'url') {
+          // Decide from the raw body, before apparent comments can be discarded.
+          const first = value.slice(index).trimStart()[0];
+          unquotedUrl = first !== '"' && first !== "'";
+        } else if (type === 'symbol' && text === ')') unquotedUrl = false;
         tokens.push({ type, text, gap });
         gap = false;
       }

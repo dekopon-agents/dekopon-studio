@@ -60,7 +60,7 @@ test('decodes comments and string continuations in image-set candidates', () => 
 
 test('decodes CSS string escapes before validating resource URLs', () => {
   expect(checkText(String.raw`body { background: image-set("\2f assets/escaped.png" 1x) }`, '.css')).toEqual(['/assets/escaped.png']);
-  expect(checkText('body { background: url(/* candidate */"/assets/comment.png") }', '.css')).toEqual(['/assets/comment.png']);
+  expect(checkText('body { background: url(/* candidate */"/assets/comment.png") }', '.css')).toEqual(['Cannot parse CSS: comment opener inside unquoted URL']);
   expect(checkText('body { background: url("/assets/conti\\\nnuation.png") }', '.css')).toEqual(['/assets/continuation.png']);
   expect(checkText('body { background: url(/studio/image.png) }', '.css')).toEqual([]);
 });
@@ -78,4 +78,13 @@ test('fails closed with a diagnostic for unsupported or incomplete CSS resource 
     'url("/studio/unfinished)',
     String.raw`url(/studio/escaped\ image.png)`,
   ]) expect(checkText(`body { background: ${resource} }`, '.css').some(error => error.startsWith('Cannot parse CSS:'))).toBe(true);
+});
+
+test('rejects comment openers inside unquoted URLs before removing comments', () => {
+  const target = '/studio/a/*/../../../assets/leak.png/*ignored*/';
+  for (const resource of [`url(${target})`, `image-set(url(${target}) 1x)`]) {
+    expect(checkText(`body { background: ${resource} }`, '.css')).toEqual([
+      'Cannot parse CSS: comment opener inside unquoted URL',
+    ]);
+  }
 });
