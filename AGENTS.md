@@ -1,0 +1,60 @@
+# Dekopon Studio engineering gates
+
+Use Node 24.19.0, declared in `.nvmrc` and used by CI, and npm 11.9.0.
+`package.json` restricts the Node engine to major 24. Commit `package-lock.json`
+and install with `npm ci`. Pin direct dependency versions exactly. Every GitHub
+Action must use a full commit SHA with its version in a comment. Workflow
+permissions default to `contents: read`.
+
+Run these exact commands, in order, before submitting changes:
+
+```sh
+npm ci
+npm audit --audit-level=high
+npx playwright install --with-deps chromium
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run check:dist
+```
+
+TypeScript stays strict. The test suite includes the landing component and URL
+runtime request-gate regressions. CI runs every gate and uploads `dist/` as an artifact.
+No deployment, publishing, release tags, Rust toolchain, or wasm package belongs
+in this bootstrap.
+
+## Must-hold client-side rule
+
+Nothing a viewer opens may ever leave the browser. This is a must-hold invariant
+for every later step: no uploads, remote evaluation, analytics, telemetry, or
+code that sends viewer data anywhere. All runtime assets must be bundled and all
+asset URLs must stay under `/studio/`; no runtime fonts, CDNs, or third-party
+requests. Only synthetic fixtures may enter this repository.
+
+`src/App.tsx` owns the landing shell. Future forensic reader modules belong under
+`src/record/`. Future wasm packages will plug in through `src/wasm/`, bundled for
+client-side execution; bootstrap adds neither that implementation nor a Rust
+build. Keep these integrations inside the browser boundary.
+
+## Built runtime request gate
+
+After `npm ci`, install the pinned browser with `npx playwright install --with-deps chromium`
+(also done in CI before tests). The exact Playwright dependency pins its Chromium
+revision; do not substitute a system browser.
+
+`npm run check:dist` enforces **no request outside /studio/ when the built pages load**.
+Playwright loads every HTML file under `dist/` at
+`https://dekopon-agents.github.io/studio/`, serving bundled resources locally from
+disk through browser routing. It records requests and rejects any whose origin
+differs or whose path is outside `/studio/`. Out-of-bound requests are aborted;
+nothing is sent to the live site or third parties. Missing assets, page errors,
+and WebSocket attempts also fail. Service workers are blocked for observation.
+No static URL scanner or inert-string allow-list remains.
+
+Each page gets an isolated context. Observation ends at network idle (500 ms with
+no pending requests, within a 10-second load limit). The gate cannot see code paths
+not exercised on load: user interactions, later timers, conditional branches,
+service-worker behavior, or markup/CSS constructed only on those paths. Review
+those paths against the must-hold browser-only rule; passing this load test is not
+a proof of all possible runtime behavior.
