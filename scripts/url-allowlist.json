@@ -1,0 +1,8 @@
+{
+  "https://react.dev/errors/": "React diagnostic link prefix; code constructs a message, not a request.",
+  "http://www.w3.org/1999/xhtml": "DOM namespace identifier.",
+  "http://www.w3.org/2000/svg": "SVG namespace identifier.",
+  "http://www.w3.org/1998/Math/MathML": "MathML namespace identifier.",
+  "http://www.w3.org/1999/xlink": "XLink namespace identifier.",
+  "http://www.w3.org/XML/1998/namespace": "XML namespace identifier."
+}
