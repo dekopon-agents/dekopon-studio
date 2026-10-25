@@ -48,3 +48,12 @@ test.each([
   const directory = await fixture({ 'index.html': `<!doctype html>${html}` });
   await expect(checkDist(directory)).rejects.toThrow(`Request outside /studio/: https://dekopon-agents.github.io${path}`);
 }, 30000);
+
+
+test('rejects a native WebSocket opened by a worker on load', async () => {
+  const directory = await fixture({
+    'index.html': '<!doctype html><script>new Worker("/studio/worker.js")</script>',
+    'worker.js': 'new WebSocket("wss://example.com/private")',
+  });
+  await expect(checkDist(directory)).rejects.toThrow('WebSocket request in static app: wss://example.com/private');
+}, 30000);

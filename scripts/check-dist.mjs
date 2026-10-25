@@ -24,9 +24,17 @@ export async function checkDist(directory) {
   const browser = await chromium.launch();
   try {
     for (const file of pages) {
-      const context = await browser.newContext({ serviceWorkers: 'block' });
+      const context = await browser.newContext({ serviceWorkers: 'block', offline: true });
       try {
         context.on('request', request => requests.add(request.url()));
+        context.on('page', page => {
+          // Native events also cover worker sockets, which routing cannot intercept.
+          page.on('websocket', socket => {
+            requests.add(socket.url());
+            failures.add(`WebSocket request in static app: ${socket.url()}`);
+          });
+          page.on('pageerror', error => failures.add(`Page error: ${error.message}`));
+        });
         // Serve built files from disk at the real deployed HTTPS origin. No request
         // reaches the public site or any other network destination.
         await context.route('**/*', async route => {
@@ -57,7 +65,6 @@ export async function checkDist(directory) {
           socket.close();
         });
         const page = await context.newPage();
-        page.on('pageerror', error => failures.add(`Page error: ${error.message}`));
         const path = relative(directory, file).split(sep).map(encodeURIComponent).join('/');
         try {
           await page.goto(`${deployedOrigin}${base}${path}`, { waitUntil: 'load', timeout: 10000 });

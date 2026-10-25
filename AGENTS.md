@@ -11,6 +11,7 @@ Run these exact commands, in order, before submitting changes:
 ```sh
 npm ci
 npm audit --audit-level=high
+npx playwright install --with-deps chromium
 npm run lint
 npm run typecheck
 npm test
