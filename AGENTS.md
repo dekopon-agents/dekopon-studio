@@ -19,7 +19,7 @@ npm run check:dist
 ```
 
 TypeScript stays strict. The test suite includes the landing component and URL
-checker rejection cases. CI runs every gate and uploads `dist/` as an artifact.
+runtime request-gate regressions. CI runs every gate and uploads `dist/` as an artifact.
 No deployment, publishing, release tags, Rust toolchain, or wasm package belongs
 in this bootstrap.
 
@@ -36,12 +36,24 @@ requests. Only synthetic fixtures may enter this repository.
 client-side execution; bootstrap adds neither that implementation nor a Rust
 build. Keep these integrations inside the browser boundary.
 
-## Built URL gate
+## Built runtime request gate
 
-`scripts/check-dist.mjs` parses JavaScript literals and HTML attributes and scans
-CSS URLs. It fails on URLs outside `/studio/` except exact inert strings recorded
-with reasons in `scripts/url-allowlist.json`. Inert strings are allowed as code
-constants, never as HTML asset or CSS resource URLs. Unknown dist file types fail
-closed; extend the checker deliberately when new asset types are introduced.
-The check does not prove arbitrary computed code makes no network calls: review
-all future data and networking code against the client-side rule above.
+After `npm ci`, install the pinned browser with `npx playwright install --with-deps chromium`
+(also done in CI before tests). The exact Playwright dependency pins its Chromium
+revision; do not substitute a system browser.
+
+`npm run check:dist` enforces **no request outside /studio/ when the built pages load**.
+Playwright loads every HTML file under `dist/` at
+`https://dekopon-agents.github.io/studio/`, serving bundled resources locally from
+disk through browser routing. It records requests and rejects any whose origin
+differs or whose path is outside `/studio/`. Out-of-bound requests are aborted;
+nothing is sent to the live site or third parties. Missing assets, page errors,
+and WebSocket attempts also fail. Service workers are blocked for observation.
+No static URL scanner or inert-string allow-list remains.
+
+Each page gets an isolated context. Observation ends at network idle (500 ms with
+no pending requests, within a 10-second load limit). The gate cannot see code paths
+not exercised on load: user interactions, later timers, conditional branches,
+service-worker behavior, or markup/CSS constructed only on those paths. Review
+those paths against the must-hold browser-only rule; passing this load test is not
+a proof of all possible runtime behavior.

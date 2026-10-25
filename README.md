@@ -15,12 +15,13 @@ Use Node 24.19.0 (`nvm use`, if you use nvm) and npm 11.9.0.
 
 ```sh
 npm ci
+npx playwright install --with-deps chromium
 npm run dev
 ```
 
 Open the local URL printed by Vite at `/studio/`. Run the gates in [AGENTS.md](AGENTS.md)
 before proposing changes. `npm run build` writes the static app to `dist/` with
-asset paths under `/studio/`; `npm run check:dist` checks its URL allow-list.
+asset paths under `/studio/`; `npm run check:dist` checks requests while Chromium loads every built HTML page.
 
 The app uses bundled code and system fonts. Viewer data must stay in the browser.
 Only synthetic fixtures may enter this repository.
