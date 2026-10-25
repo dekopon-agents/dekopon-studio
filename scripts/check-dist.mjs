@@ -31,11 +31,104 @@ export function checkText(text, extension) {
     if (/^\/(?!\/)[\w.%]/.test(value) || /^\.\.?\//.test(value)) check(value);
   }
   function css(value) {
-    for (const match of value.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)|@import\s+["']([^"']+)["']/gi)) check(match[2] ?? match[3], true);
-    for (const imageSet of value.matchAll(/(?:-webkit-)?image-set\(((?:[^()"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\([^)]*\))*)\)/gi)) {
-      for (const candidate of imageSet[1].matchAll(/(?:^|,)\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')/g)) {
-        check(candidate[1] ?? candidate[2], true);
+    try {
+      const tokens = [];
+      let index = 0;
+      let gap = false;
+      while (index < value.length) {
+        if (/\s/.test(value[index])) { index++; gap = true; continue; }
+        if (value.startsWith('/*', index)) {
+          const end = value.indexOf('*/', index + 2);
+          if (end < 0) throw new Error('unterminated comment');
+          index = end + 2;
+          gap = true;
+          continue;
+        }
+        let text = '';
+        let type = 'symbol';
+        const quote = value[index];
+        if (quote === '"' || quote === "'") {
+          type = 'string';
+          index++;
+          while (index < value.length && value[index] !== quote) {
+            const char = value[index++];
+            if (/[\n\r\f]/.test(char)) throw new Error('unescaped newline in string');
+            if (char !== '\\') { text += char; continue; }
+            if (index === value.length) throw new Error('unfinished string escape');
+            if (/[\n\r\f]/.test(value[index])) {
+              if (value[index++] === '\r' && value[index] === '\n') index++;
+              continue;
+            }
+            const hex = value.slice(index).match(/^[\da-f]{1,6}/i)?.[0];
+            if (hex) {
+              const point = parseInt(hex, 16);
+              text += point === 0 || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)
+                ? '\ufffd' : String.fromCodePoint(point);
+              index += hex.length;
+              if (/\s/.test(value[index] ?? '')) {
+                if (value[index++] === '\r' && value[index] === '\n') index++;
+              }
+            } else text += value[index++];
+          }
+          if (value[index++] !== quote) throw new Error('unterminated string');
+        } else if (/[\w.-]/.test(quote)) {
+          type = 'word';
+          while (index < value.length && /[\w.-]/.test(value[index])) text += value[index++];
+        } else {
+          // Escaped identifiers and unquoted URL escapes are unsupported, not ignored.
+          if (quote === '\\') throw new Error('unsupported escape outside a string');
+          text = value[index++];
+        }
+        tokens.push({ type, text, gap });
+        gap = false;
       }
+      let cursor = 0;
+      const is = text => tokens[cursor]?.text === text;
+      function requireToken(text) {
+        if (!is(text)) throw new Error(`expected ${text}`);
+        cursor++;
+      }
+      function url() {
+        requireToken('(');
+        let target = '';
+        if (tokens[cursor]?.type === 'string') target = tokens[cursor++].text;
+        else {
+          let first = true;
+          while (tokens[cursor] && !is(')')) {
+            const token = tokens[cursor++];
+            if ((!first && token.gap) || token.type === 'string' || /[()]/.test(token.text)) {
+              throw new Error('unsupported unquoted URL');
+            }
+            target += token.text;
+            first = false;
+          }
+        }
+        requireToken(')');
+        check(target, true);
+      }
+      function imageSet() {
+        requireToken('(');
+        while (true) {
+          if (tokens[cursor]?.type === 'string') check(tokens[cursor++].text, true);
+          else if (tokens[cursor]?.text.toLowerCase() === 'url') { cursor++; url(); }
+          else throw new Error('expected a quoted image-set candidate or url()');
+          if (/^(?:\d+(?:\.\d*)?|\.\d+)(?:x|dppx|dpi|dpcm)$/i.test(tokens[cursor]?.text ?? '')) cursor++;
+          if (is(')')) { cursor++; return; }
+          requireToken(',');
+        }
+      }
+      while (cursor < tokens.length) {
+        const token = tokens[cursor++];
+        if (token.type === 'word' && is('(')) {
+          if (token.text.toLowerCase() === 'url') url();
+          else if (/^(?:-webkit-)?image-set$/i.test(token.text)) imageSet();
+        } else if (token.text === '@' && tokens[cursor]?.text.toLowerCase() === 'import') {
+          cursor++;
+          if (tokens[cursor]?.type === 'string') check(tokens[cursor++].text, true);
+        }
+      }
+    } catch (error) {
+      errors.push(`Cannot parse CSS: ${error.message}`);
     }
     strings(value);
   }

@@ -49,3 +49,33 @@ test('rejects entity-decoded URL control characters before accepting the Studio 
     expect(checkText(`<img src="/studio/.${entity}./outside.png">`, '.html')).not.toEqual([]);
   }
 });
+
+test('decodes comments and string continuations in image-set candidates', () => {
+  expect(checkText('body { background: image-set(/* candidate */"/assets/comment.png" 1x) }', '.css')).toEqual(['/assets/comment.png']);
+  for (const newline of ['\n', '\r\n', '\r', '\f']) {
+    expect(checkText(`body { background: image-set("/assets/conti\\${newline}nuation.png" 1x) }`, '.css')).toEqual(['/assets/continuation.png']);
+  }
+  expect(checkText('body { background: image-set(/* candidate */"/studio/image.png" 1x) }', '.css')).toEqual([]);
+});
+
+test('decodes CSS string escapes before validating resource URLs', () => {
+  expect(checkText(String.raw`body { background: image-set("\2f assets/escaped.png" 1x) }`, '.css')).toEqual(['/assets/escaped.png']);
+  expect(checkText('body { background: url(/* candidate */"/assets/comment.png") }', '.css')).toEqual(['/assets/comment.png']);
+  expect(checkText('body { background: url("/assets/conti\\\nnuation.png") }', '.css')).toEqual(['/assets/continuation.png']);
+  expect(checkText('body { background: url(/studio/image.png) }', '.css')).toEqual([]);
+});
+
+test('fails closed with a diagnostic for unsupported or incomplete CSS resource forms', () => {
+  for (const resource of [
+    'image-set(var(--image) 1x)',
+    'image-set("/studio/image.png" type("image/png"))',
+    'image-set("/studio/image.png" 1x,)',
+    'image-set("/studio/image.png" 1x',
+    'image-set(/* unfinished',
+    'url("/studio/image.png" extra)',
+    'url(/studio/image.png',
+    'url(/studio/image.png extra)',
+    'url("/studio/unfinished)',
+    String.raw`url(/studio/escaped\ image.png)`,
+  ]) expect(checkText(`body { background: ${resource} }`, '.css').some(error => error.startsWith('Cannot parse CSS:'))).toBe(true);
+});
