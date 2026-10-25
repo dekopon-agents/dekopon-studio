@@ -4,5 +4,7 @@
   "http://www.w3.org/2000/svg": "SVG namespace identifier.",
   "http://www.w3.org/1998/Math/MathML": "MathML namespace identifier.",
   "http://www.w3.org/1999/xlink": "XLink namespace identifier.",
-  "http://www.w3.org/XML/1998/namespace": "XML namespace identifier."
+  "http://www.w3.org/XML/1998/namespace": "XML namespace identifier.",
+  "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.')": "React DOM 19.3.1 sanitizeURL blocked-link sentinel: throws locally, sends no request (react-dom-client.production.js:1581-1584).",
+  "javascript:throw new Error('A React form was unexpectedly submitted. If you called form.submit() manually, consider using form.requestSubmit() instead. If you\\'re trying to use event.stopPropagation() in a submit event handler, consider also calling event.preventDefault().')": "React DOM 19.3.1 function-form-action guard: throws locally, sends no request (react-dom-client.production.js:14458-14462)."
 }

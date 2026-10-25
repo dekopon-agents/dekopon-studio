@@ -19,7 +19,11 @@ export function checkText(text, extension) {
   }
   function strings(value) {
     // Parse JS literals before scanning so escapes cannot conceal a URL.
-    for (const match of value.matchAll(/(?:[a-z][a-z\d+.-]*:\/\/|\/\/)[^\s"'<>`\\)]+|\b(?:data|blob|javascript):[^\s"'<>`]+/gi)) check(match[0]);
+    if (/^(?:data|blob|javascript):/i.test(value)) {
+      check(value);
+      return;
+    }
+    for (const match of value.matchAll(/(?:[a-z][a-z\d+.-]*:\/\/|\/\/)[^\s"'<>`\\)]+/gi)) check(match[0]);
     if (/^\/(?!\/)[\w.%]/.test(value)) check(value);
   }
   function css(value) {
