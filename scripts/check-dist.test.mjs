@@ -23,3 +23,29 @@ test('rejects external, escaped, protocol-relative, relative and wrongly rooted 
   expect(checkText('body { background: url(https://example.com/image.png) }', '.css')).not.toEqual([]);
   expect(checkText('@import "./external.css";', '.css')).not.toEqual([]);
 });
+
+
+test('rejects dot-relative fetch and Worker targets', () => {
+  for (const target of ['./private', '../private']) {
+    expect(checkText(`fetch("${target}")`, '.js')).toEqual([target]);
+    expect(checkText(`new Worker("${target}")`, '.js')).toEqual([target]);
+  }
+});
+
+test('validates each quoted image-set candidate', () => {
+  expect(checkText('body { background-image: image-set("/studio/image.png" 1x, "/studio/image@2x.png" 2x) }', '.css')).toEqual([]);
+  for (const candidates of [
+    '"/assets/image.png" 1x',
+    "'/assets/image.png' 1x",
+    '"/studio/image.png" 1x, "/assets/image.png" 2x',
+    'url("/studio/image.png") 1x, "/assets/image.png" 2x',
+  ]) {
+    expect(checkText(`body { background-image: image-set(${candidates}) }`, '.css')).toEqual(['/assets/image.png']);
+  }
+});
+
+test('rejects entity-decoded URL control characters before accepting the Studio prefix', () => {
+  for (const entity of ['&#9;', '&#10;', '&#13;']) {
+    expect(checkText(`<img src="/studio/.${entity}./outside.png">`, '.html')).not.toEqual([]);
+  }
+});

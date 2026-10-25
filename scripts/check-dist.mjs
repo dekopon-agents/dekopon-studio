@@ -10,6 +10,10 @@ const urlAttributes = new Set(['src', 'href', 'action', 'formaction', 'poster', 
 export function checkText(text, extension) {
   const errors = [];
   function check(value, asset = false) {
+    if (/[\t\n\r]/.test(value)) {
+      errors.push(value);
+      return;
+    }
     if (value.startsWith('/studio/')) {
       const decoded = decodeURIComponent(value.split(/[?#]/)[0]);
       if (decoded.includes('\\') || decoded.split('/').includes('..')) errors.push(value);
@@ -24,10 +28,15 @@ export function checkText(text, extension) {
       return;
     }
     for (const match of value.matchAll(/(?:[a-z][a-z\d+.-]*:\/\/|\/\/)[^\s"'<>`\\)]+/gi)) check(match[0]);
-    if (/^\/(?!\/)[\w.%]/.test(value)) check(value);
+    if (/^\/(?!\/)[\w.%]/.test(value) || /^\.\.?\//.test(value)) check(value);
   }
   function css(value) {
     for (const match of value.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)|@import\s+["']([^"']+)["']/gi)) check(match[2] ?? match[3], true);
+    for (const imageSet of value.matchAll(/(?:-webkit-)?image-set\(((?:[^()"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\([^)]*\))*)\)/gi)) {
+      for (const candidate of imageSet[1].matchAll(/(?:^|,)\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')/g)) {
+        check(candidate[1] ?? candidate[2], true);
+      }
+    }
     strings(value);
   }
   function walk(node) {
