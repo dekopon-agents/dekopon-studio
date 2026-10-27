@@ -2,3 +2,5 @@ node_modules/
 dist/
 coverage/
 *.local
+harness/.cache/
+__pycache__/

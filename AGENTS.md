@@ -58,3 +58,18 @@ not exercised on load: user interactions, later timers, conditional branches,
 service-worker behavior, or markup/CSS constructed only on those paths. Review
 those paths against the must-hold browser-only rule; passing this load test is not
 a proof of all possible runtime behavior.
+
+## Operator harness (`harness/`)
+
+`harness/` is operator-side Python 3.12 that drives released Dekopon daemons with a loopback stub
+model and synthetic fixtures, and writes trial bundles in the layout of `harness/BUNDLE.md`. The
+must-hold browser-only rule above governs the app: everything a viewer opens. It does not describe
+the harness, which runs on an operator's machine, talks to local processes and a local Collector, and
+downloads checksum-pinned release artifacts into the ignored `harness/.cache/`. Nothing in `harness/`
+may be imported by `src/` or bundled into `dist/`, and only synthetic fixtures may enter it.
+
+The Node gates above are unchanged. The harness adds one daemon-free gate, run in CI as its own job:
+
+```sh
+python3.12 -m unittest discover -s harness/tests -v
+```
