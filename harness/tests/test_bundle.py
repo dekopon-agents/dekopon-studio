@@ -127,6 +127,23 @@ class BundleTest(unittest.TestCase):
         self.assertEqual((regraded["status"], regraded["score"]), ("infrastructure_error", None))
         self.assertIn("all_of", regraded["reasons"][0])
 
+    def test_an_oversized_export_number_still_finalizes_as_infrastructure_error(self):
+        record = synthetic.driver()
+        attempt = Bundle.create(self.root, "synthetic", "two-message-gh-recall")
+        staging = synthetic.write_bundle(self.root.with_name("staging"))
+        for item in staging.iterdir():
+            if item.is_dir():
+                shutil.copytree(item, self.root / item.name, dirs_exist_ok=True)
+        (self.root / "trace" / "traces.jsonl").write_text(
+            '{"resourceSpans": [{"scopeSpans": [{"spans": [{"startTimeUnixNano": ' + "9" * 4301 + '}]}]}]}\n'
+        )
+        bundle.write_json(self.root / "driver.json", record)
+        manifest, graded = driver.finish(attempt, synthetic.scenario(), record, DEKOPON, [], {}, None)
+        self.assertIsNotNone(json.loads((self.root / "manifest.json").read_text())["attempt"]["finishedAt"])
+        self.assertIn("export_malformed", [reason["code"] for reason in manifest["completeness"]["reasons"]])
+        self.assertEqual(json.loads((self.root / "grade.json").read_text())["status"], "infrastructure_error")
+        self.assertEqual(graded["score"], None)
+
     def test_paths_cannot_escape_the_bundle(self):
         attempt = Bundle.create(self.root, "synthetic", "two-message-gh-recall")
         with self.assertRaises(ValueError):

@@ -51,6 +51,16 @@ class ScenarioTest(unittest.TestCase):
         with self.assertRaisesRegex(scenarios.ScenarioError, "credential is not allowed"):
             scenarios.validate(data)
 
+    def test_a_scenario_cannot_replace_generated_broker_inputs(self):
+        """Policy path and provider selection come from assembly, so the bundle records what runs."""
+        for key, value in (("policiesPath", "/operator/other.cedar"),
+                           ("providers", ["/operator/unchecked-provider.wasm"]),
+                           ("identities", []), ("telemetry", {})):
+            data = synthetic.scenario()
+            data["broker"][key] = value
+            with self.assertRaisesRegex(scenarios.ScenarioError, f"broker.{key} is not allowed"):
+                scenarios.validate(data)
+
     def test_launch_config_admits_only_the_fixture_authority(self):
         arguments = dict(
             providers={"gh": Path("/cache/gh-provider.wasm")}, model_authority="127.0.0.1:4001",

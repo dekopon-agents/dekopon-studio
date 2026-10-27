@@ -34,6 +34,9 @@ COMPLETION_PREDICATES = {"lastUserContains", "toolContains", "historyContains"}
 # the attempt's loopback service: the gh provider falls back to api.github.com when baseUrl is absent.
 FIXTURE_ENDPOINTS = {"gh": "baseUrl"}
 BROKER_KEYS = {"capabilities", "providerSettings", "strict"}
+# Paths, provider selection, identities and telemetry belong to assembly alone, so the bundle's
+# recorded policy and provider artifacts are always the ones the broker reads.
+GENERATED_BROKER_KEYS = {"apiVersion", "socketPath", "policiesPath", "providers", "identities", "principals", "telemetry"}
 # Credential and secret plumbing has no place in a stub-only trial, at any depth.
 CREDENTIAL_KEYS = {"credential", "credentialsPath", "secretMapPath", "secretUse", "defaultSecretUse"}
 
@@ -42,12 +45,13 @@ class ScenarioError(ValueError):
     pass
 
 
-def _grant_problems(broker: Any, providers: list[str], authority: str, origin: str) -> list[str]:
-    """Everything in a broker section that could reach past the fixture service."""
+def _grant_problems(broker: Any, providers: list[str], authority: str, origin: str, *, assembled: bool) -> list[str]:
+    """Everything in a broker section that could reach past the fixture service. A scenario's own
+    section holds only BROKER_KEYS; the generated keys are accepted only in assembled config."""
     if not isinstance(broker, dict):
         return ["broker is not an object"]
-    problems = [f"broker.{key} is not allowed" for key in sorted(set(broker) - BROKER_KEYS - {
-        "apiVersion", "socketPath", "policiesPath", "providers", "identities", "principals", "telemetry"})]
+    allowed = BROKER_KEYS | GENERATED_BROKER_KEYS if assembled else BROKER_KEYS
+    problems = [f"broker.{key} is not allowed" for key in sorted(set(broker) - allowed)]
     settings = broker.get("providerSettings", {})
     for provider in providers:
         key = FIXTURE_ENDPOINTS.get(provider)
@@ -77,7 +81,7 @@ def _grant_problems(broker: Any, providers: list[str], authority: str, origin: s
 
 def check_assembled(config: dict[str, Any], providers: list[str], service_authority: str) -> None:
     """The configuration about to be launched admits only the attempt's loopback fixtures."""
-    problems = _grant_problems(config["broker"], providers, service_authority, f"http://{service_authority}")
+    problems = _grant_problems(config["broker"], providers, service_authority, f"http://{service_authority}", assembled=True)
     if not service_authority.startswith("127.0.0.1:"):
         problems.append("fixture service is not on loopback")
     for model in config["gateway"]["models"]:
@@ -116,7 +120,9 @@ def validate(scenario: dict[str, Any]) -> None:
             raise ScenarioError(f"scenario names a URL ({text[:60]!r}); use {{{{service.origin}}}}")
     if not isinstance(scenario["providers"], list) or not all(isinstance(p, str) for p in scenario["providers"]):
         raise ScenarioError("providers must be a list of names")
-    problems = _grant_problems(scenario["broker"], scenario["providers"], "{{service.authority}}", "{{service.origin}}")
+    problems = _grant_problems(
+        scenario["broker"], scenario["providers"], "{{service.authority}}", "{{service.origin}}", assembled=False
+    )
     if problems:
         raise ScenarioError("; ".join(problems))
     if not scenario["messages"]:
@@ -188,6 +194,7 @@ def assemble(
     }
     policies = "\n".join(_substitute(scenario["policies"], values)) + "\n"
     broker = {
+        **broker_section,  # first, so no scenario key can replace a generated one
         "apiVersion": BROKER_API,
         "socketPath": str(runtime / "broker.sock"),
         "policiesPath": str(runtime / "policies.cedar"),
@@ -201,7 +208,6 @@ def assemble(
             }
         ],
         "principals": {scenario["subject"]["principal"]: {"subjects": [scenario["subject"]["external"]]}},
-        **broker_section,
         "telemetry": {**telemetry, "serviceName": "dekopon-brokerd"},
     }
     route = _substitute(scenario["gateway"]["route"], values)

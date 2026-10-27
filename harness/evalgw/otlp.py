@@ -154,7 +154,8 @@ def read_lines(path: Path) -> Iterator[tuple[str, dict[str, Any]]]:
             where = f"{path.name}:{number}"
             try:
                 request = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            # ValueError covers JSONDecodeError and CPython's integer digit limit (4300 digits).
+            except ValueError as error:
                 raise ExportError(f"{where} is not JSON: {error}") from None
             yield where, _object(request, where)
 
