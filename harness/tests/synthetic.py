@@ -165,10 +165,11 @@ def message_two() -> list[dict[str, Any]]:
     """Recall from history; like the real run, the trace holds a second, later gateway.message span."""
     t = BASE + 10_000
     trace = "b2" * 16
-    # As a journal-backed route replays it on 0.62.0: the earlier turn rides inside the user message.
+    # As a journal-backed route replays it on 0.62.0: the earlier turn rides in an earlier user message.
     history = [
         {"role": "system", "content": "s"},
-        user(MEMORY_REPLAY + "Which description did you report a moment ago?"),
+        user(MEMORY_REPLAY),
+        user("Which description did you report a moment ago?"),
     ]
     return [
         span(trace, "2000000000000001", "", "gateway.message", t, t + 900),
@@ -177,7 +178,7 @@ def message_two() -> list[dict[str, Any]]:
         span(
             trace, "2000000000000003", "2000000000000002", "prompt.model_turn", t + 20, t + 200,
             events=[
-                prompt(t + 21, 1, "full", 2, history),
+                prompt(t + 21, 1, "full", 3, history),
                 answer(t + 199, 1, f"I reported the description {DESCRIPTION}.", []),
             ],
         ),

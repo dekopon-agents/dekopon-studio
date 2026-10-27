@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import synthetic  # noqa: E402
 from evalgw import scenario as scenarios  # noqa: E402
-from evalgw.fixtures import Service, StubModel  # noqa: E402
+from evalgw.fixtures import Service, StubModel, unmet  # noqa: E402
 
 
 class ScenarioTest(unittest.TestCase):
@@ -149,13 +149,21 @@ class FixtureTest(unittest.TestCase):
         try:
             status, body = post(model, "/v1/chat/completions", {"messages": [
                 {"role": "system", "content": "s"},
-                {"role": "user", "content": synthetic.MEMORY_REPLAY + "Which description did you report a moment ago?"},
+                {"role": "user", "content": synthetic.MEMORY_REPLAY},
+                {"role": "user", "content": "Which description did you report a moment ago?"},
             ]})
         finally:
             model.stop()
         self.assertEqual(status, 200)
         self.assertIn(synthetic.FACT, body["choices"][0]["message"]["content"])
         self.assertEqual(model.record()["violations"], [])
+
+    def test_history_is_not_satisfied_by_the_final_prompt_or_a_system_prompt(self):
+        expect = {"historyContains": synthetic.FACT}
+        question = {"role": "user", "content": f"Did you report {synthetic.FACT} a moment ago?"}
+        self.assertTrue(unmet(expect, [{"role": "system", "content": "s"}, question]))
+        self.assertTrue(unmet(expect, [{"role": "system", "content": f"Remember {synthetic.FACT}."}, question]))
+        self.assertEqual(unmet(expect, [{"role": "user", "content": synthetic.MEMORY_REPLAY}, question]), [])
 
     def test_stub_model_refuses_a_request_its_script_did_not_foresee(self):
         model = StubModel(synthetic.scenario()["model"]["completions"]).start()

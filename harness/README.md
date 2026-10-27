@@ -48,8 +48,9 @@ starts.
 
 Output needles must fall within the provider output the model receives: on 0.62.0 tool output is
 cut at about 1 KiB with no marker before it reaches `agent.tool.output`. On a journal-backed route
-earlier turns come back inside the user message (`[memory: ...]`), so the stub's `historyContains`
-predicate searches every message in the request.
+earlier turns come back as a `[memory: ...]` replay in an earlier user message, not as assistant
+messages, so the stub's `historyContains` predicate searches the user, tool and assistant messages
+before the final prompt; the final prompt and system prompts never satisfy it.
 
 The acceptance scenario, `scenarios/two-message.json`, makes one authorized `gh repo view` read
 through brokerd against the synthetic service, then asks the agent to recall that fact on a
