@@ -66,8 +66,8 @@ class GradeTest(unittest.TestCase):
         the script; the read is graded from agent.tool.output, not failed."""
         spans = synthetic.message_one() + synthetic.message_two()
         shell = synthetic.otlp.attributes(spans[3]["attributes"])
-        self.assertEqual((shell["shell.command.output"], shell["shell.command.output.bytes"]), ("", 0))
-        self.assertGreater(shell["shell.command.stdout.bytes"], 0)
+        self.assertEqual((shell["shell.command.output"], shell["shell.command.output.bytes"]), ("", "0"))
+        self.assertGreater(int(shell["shell.command.stdout.bytes"]), 0)
         graded = grade.grade(self.export(spans), [r for r in self.rules if r["rule"] in ("output", "readOrder")], COMPLETE)
         self.assertEqual((graded["status"], graded["score"]), ("passed", 1.0))
 
@@ -97,11 +97,24 @@ class GradeTest(unittest.TestCase):
         self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["script"])
         self.assertIn(f"of {len(full)} bytes", graded["reasons"][0])
 
+    def test_decimal_text_lengths_and_exit_codes_grade_as_numbers(self):
+        """dekopon 0.62.0 exports `.bytes` and `exit_code` as stringValue text ("44", "0")."""
+        spans = synthetic.message_one() + synthetic.message_two()
+        raw = {item["key"]: item["value"] for item in spans[3]["attributes"]}
+        self.assertEqual(raw["shell.command.exit_code"], {"stringValue": "0"})
+        self.assertEqual(raw["shell.command.arguments.bytes"], {"stringValue": str(len(raw["shell.command.arguments"]["stringValue"]))})
+        script = [rule for rule in self.rules if rule["rule"] == "script"]
+        self.assertEqual(grade.grade(self.export(spans), script, COMPLETE)["status"], "passed")
+        script[0]["exitCode"] = 1
+        self.assertEqual(grade.grade(self.export(spans), script, COMPLETE)["status"], "failed")
+
     def test_untyped_command_fields_are_gaps_not_failures(self):
         script = [rule for rule in self.rules if rule["rule"] == "script"]
         for key, value in (("shell.command.name", {"kvlistValue": {"values": []}}),
                            ("outcome", {"intValue": "1"}),
-                           ("shell.command.exit_code", {"stringValue": "0"})):
+                           ("shell.command.exit_code", {"stringValue": "zero"}),
+                           ("shell.command.exit_code", {"stringValue": "²"}),
+                           ("shell.command.arguments.bytes", {"stringValue": "4 4"})):
             spans = synthetic.message_one() + synthetic.message_two()
             spans[3]["attributes"] = [item for item in spans[3]["attributes"] if item["key"] != key]
             spans[3]["attributes"].append({"key": key, "value": value})

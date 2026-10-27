@@ -29,14 +29,16 @@ def unmet(expect: dict[str, Any], messages: list[dict[str, Any]]) -> list[str]:
     """The scripted request predicates this chat request fails."""
     users = [_text(m.get("content")) for m in messages if m.get("role") == "user"]
     tools = [_text(m.get("content")) for m in messages if m.get("role") == "tool"]
-    assistants = [_text(m.get("content")) for m in messages if m.get("role") == "assistant"]
+    # On a journal-backed route 0.62.0 replays earlier turns inside a user message ("[memory: ...]"),
+    # not as assistant messages, so history means the text of every message in the request.
+    everything = [_text(m.get("content")) for m in messages]
     failures = []
     if "lastUserContains" in expect and not (users and expect["lastUserContains"] in users[-1]):
         failures.append(f"last user message lacks {expect['lastUserContains']!r}")
     if "toolContains" in expect and not any(expect["toolContains"] in text for text in tools):
         failures.append(f"no tool result contains {expect['toolContains']!r}")
-    if "historyContains" in expect and not any(expect["historyContains"] in text for text in assistants):
-        failures.append(f"no earlier assistant message contains {expect['historyContains']!r}")
+    if "historyContains" in expect and not any(expect["historyContains"] in text for text in everything):
+        failures.append(f"no message in the request carries {expect['historyContains']!r}")
     return failures
 
 

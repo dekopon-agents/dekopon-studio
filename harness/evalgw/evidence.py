@@ -70,7 +70,9 @@ class Message:
         return None
 
 
-def _integer(value: Any) -> int | None:
+def decimal(value: Any) -> int | None:
+    """A count, length or code as dekopon 0.62.0 exports it: span and event attributes arrive as
+    stringValue decimal text ("44"), so text and integers are both accepted; nothing else is."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -95,9 +97,9 @@ def _prompt(event: Event, spans: dict[tuple[str, str], Span]) -> Prompt:
     scope = event.attributes.get("transcript.scope")
     return Prompt(
         session=_session(event, spans),
-        turn=_integer(event.attributes.get("model.turn")),
+        turn=decimal(event.attributes.get("model.turn")),
         scope=scope if isinstance(scope, str) else None,
-        count=_integer(event.attributes.get("message.count")),
+        count=decimal(event.attributes.get("message.count")),
         messages=decoded,
         event=event,
     )

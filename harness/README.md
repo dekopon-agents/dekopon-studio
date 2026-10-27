@@ -46,9 +46,14 @@ take its origin from the fixture service (`providerSettings.gh.baseUrl: "{{servi
 accepted. The assembled configuration is checked again, with real loopback values, before any daemon
 starts.
 
+Output needles must fall within the provider output the model receives: on 0.62.0 tool output is
+cut at about 1 KiB with no marker before it reaches `agent.tool.output`. On a journal-backed route
+earlier turns come back inside the user message (`[memory: ...]`), so the stub's `historyContains`
+predicate searches every message in the request.
+
 The acceptance scenario, `scenarios/two-message.json`, makes one authorized `gh repo view` read
 through brokerd against the synthetic service, then asks the agent to recall that fact on a
-journal-backed route.
+journal-backed route. Its whole `repo view` output is 69 bytes, well inside the output cap.
 
 ## Tests
 

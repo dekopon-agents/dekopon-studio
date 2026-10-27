@@ -23,10 +23,11 @@ BASE = 1_800_000_000_000_000_000
 
 
 def value(item: Any) -> dict[str, Any]:
+    """Like dekopon 0.62.0's export: numeric span and event fields arrive as stringValue text."""
     if isinstance(item, bool):
         return {"boolValue": item}
     if isinstance(item, int):
-        return {"intValue": str(item)}
+        return {"stringValue": str(item)}
     return {"stringValue": item}
 
 
@@ -99,6 +100,10 @@ DESCRIPTION = f"Synthetic evalgw fixture: {FACT}"
 # gh 0.10.0 `repo view` prints `full_name<TAB>description` and a newline.
 REPO_VIEW = f"synthetic-org/fixture-repo\t{DESCRIPTION}\n"
 FIRST_ANSWER = f"The description of synthetic-org/fixture-repo is: {DESCRIPTION}."
+MEMORY_REPLAY = (
+    '[memory: {"turns":1}]\nperson: What is the description of synthetic-org/fixture-repo?\n'
+    f"you: {FIRST_ANSWER}\n[/memory]\n"
+)
 
 
 def script_events(time: int, call_id: str, script: str, output: str) -> list[dict[str, Any]]:
@@ -160,11 +165,10 @@ def message_two() -> list[dict[str, Any]]:
     """Recall from history; like the real run, the trace holds a second, later gateway.message span."""
     t = BASE + 10_000
     trace = "b2" * 16
+    # As a journal-backed route replays it on 0.62.0: the earlier turn rides inside the user message.
     history = [
         {"role": "system", "content": "s"},
-        user("What is the description?"),
-        {"role": "assistant", "content": FIRST_ANSWER},
-        user("Which description did you report a moment ago?"),
+        user(MEMORY_REPLAY + "Which description did you report a moment ago?"),
     ]
     return [
         span(trace, "2000000000000001", "", "gateway.message", t, t + 900),
@@ -173,7 +177,7 @@ def message_two() -> list[dict[str, Any]]:
         span(
             trace, "2000000000000003", "2000000000000002", "prompt.model_turn", t + 20, t + 200,
             events=[
-                prompt(t + 21, 1, "full", 4, history),
+                prompt(t + 21, 1, "full", 2, history),
                 answer(t + 199, 1, f"I reported the description {DESCRIPTION}.", []),
             ],
         ),

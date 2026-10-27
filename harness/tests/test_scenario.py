@@ -141,6 +141,22 @@ class FixtureTest(unittest.TestCase):
             model.stop()
         self.assertEqual(model.record()["violations"], ["request 1: beyond the 1 scripted completions"])
 
+    def test_stub_model_finds_history_replayed_inside_a_user_message(self):
+        """A journal-backed route on 0.62.0 replays the earlier turn in the user message, not as an
+        assistant message; the scripted recall must still be served."""
+        completions = synthetic.scenario()["model"]["completions"]
+        model = StubModel(completions[2:]).start()
+        try:
+            status, body = post(model, "/v1/chat/completions", {"messages": [
+                {"role": "system", "content": "s"},
+                {"role": "user", "content": synthetic.MEMORY_REPLAY + "Which description did you report a moment ago?"},
+            ]})
+        finally:
+            model.stop()
+        self.assertEqual(status, 200)
+        self.assertIn(synthetic.FACT, body["choices"][0]["message"]["content"])
+        self.assertEqual(model.record()["violations"], [])
+
     def test_stub_model_refuses_a_request_its_script_did_not_foresee(self):
         model = StubModel(synthetic.scenario()["model"]["completions"]).start()
         try:

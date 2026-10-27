@@ -83,7 +83,10 @@ is never graded.
 
 Scripts are each bash call's `agent.tool.script` text and `agent.tool.output` result, paired by
 `gen_ai.tool.call.id`; dekopon does not bound either. Script needles, output counts and read order are
-graded from them, as S4 grades its runner's scripts. `shell.command.output` is not used: on 0.62.0 a
+graded from them, as S4 grades its runner's scripts. The tool output reaching `agent.tool.output`
+is already capped upstream (about 1 KiB on 0.62.0 with gh 0.10.0, cut with no marker); that is the
+text the model saw, so grading it is sound, but `output` and `readOrder` needles must sit inside that
+cap or they read as absent. `shell.command.output` is not used: on 0.62.0 a
 provider command can export it empty (`.bytes` 0) while its stdout reached the script. `shell.command`
 spans still decide the `command`, `argumentsContain`, `outcome` and `exitCode` checks. Their
 `.arguments` are bounded at 4096 bytes, with the original length recorded as `.arguments.bytes`; a

@@ -152,8 +152,8 @@ CAPTURE_BOUND_BYTES = 4096
 def _captured(span: Span, key: str) -> str:
     """A bounded text attribute, only when the export holds all of it."""
     text = _text(span, key)
-    recorded = span.attributes.get(f"{key}.bytes")
-    if isinstance(recorded, bool) or not isinstance(recorded, int):
+    recorded = evidence.decimal(span.attributes.get(f"{key}.bytes"))
+    if recorded is None:
         raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} lacks {key}.bytes, so its completeness is unknown")
     held = _utf8_bytes(text, f"{evidence.SHELL_SPAN} {span.span_id} {key}")
     if recorded != held or recorded > CAPTURE_BOUND_BYTES:
@@ -169,9 +169,9 @@ def _arguments(span: Span) -> list[str]:
 
 
 def _exit_code(span: Span) -> int:
-    value = _field(span, "shell.command.exit_code")
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} shell.command.exit_code is not an integer")
+    value = evidence.decimal(_field(span, "shell.command.exit_code"))
+    if value is None:
+        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} shell.command.exit_code is not a decimal integer")
     return value
 
 
