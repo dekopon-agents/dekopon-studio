@@ -114,6 +114,19 @@ class BundleTest(unittest.TestCase):
         self.assertEqual((tampered["status"], tampered["score"]), ("infrastructure_error", None))
         self.assertIn("trace/traces.jsonl", tampered["reasons"][0])
 
+    def test_offline_regrade_refuses_an_unsupported_predicate(self):
+        self.finalize(synthetic.driver())
+        scenario = json.loads((self.root / "config" / "scenario.json").read_text())
+        scenario["expect"]["rules"] = [{"rule": "fact", "message": 1, "all_of": ["NOT IN ANSWER"]}]
+        (self.root / "config" / "scenario.json").write_text(json.dumps(scenario))
+        manifest = json.loads((self.root / "manifest.json").read_text())
+        digest = sha256(self.root / "config" / "scenario.json")
+        manifest["scenario"]["config"]["sha256"] = manifest["config"]["scenario"]["sha256"] = digest
+        (self.root / "manifest.json").write_text(json.dumps(manifest))
+        regraded = verify.regrade(self.root)
+        self.assertEqual((regraded["status"], regraded["score"]), ("infrastructure_error", None))
+        self.assertIn("all_of", regraded["reasons"][0])
+
     def test_paths_cannot_escape_the_bundle(self):
         attempt = Bundle.create(self.root, "synthetic", "two-message-gh-recall")
         with self.assertRaises(ValueError):

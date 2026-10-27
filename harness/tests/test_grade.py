@@ -46,8 +46,8 @@ class GradeTest(unittest.TestCase):
         echo = synthetic.span(
             "a1" * 16, "1000000000000006", "1000000000000002", "shell.command",
             synthetic.BASE + 250, synthetic.BASE + 260,
-            attrs={"shell.command.name": "echo", "shell.command.arguments": '["trunk-synthetic"]',
-                   "shell.command.output": "trunk-synthetic", "shell.command.exit_code": 0, "outcome": "succeeded"},
+            attrs={"shell.command.name": "echo", **synthetic.captured("shell.command.arguments", '["trunk-synthetic"]'),
+                   **synthetic.captured("shell.command.output", "trunk-synthetic"), "shell.command.exit_code": 0, "outcome": "succeeded"},
         )
         rules = [rule for rule in self.rules if rule["rule"] == "readOrder"]
         self.assertEqual(grade.grade(self.export(spans), rules, COMPLETE)["status"], "passed")
@@ -76,6 +76,23 @@ class GradeTest(unittest.TestCase):
         graded = grade.grade(self.export(spans), self.rules, COMPLETE)
         self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
         self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["output", "readOrder"])
+
+    def test_truncated_output_is_a_gap_not_a_score(self):
+        """dekopon cuts shell output at 4096 bytes and records the full length beside it."""
+        full = "x" * 4500 + "trunk-synthetic"
+        spans = synthetic.message_one() + synthetic.message_two()
+        spans[3]["attributes"] = [item for item in spans[3]["attributes"] if not item["key"].startswith("shell.command.output")]
+        spans[3]["attributes"] += synthetic.attributes(
+            {"shell.command.output": full[:4096] + "…[truncated]", "shell.command.output.bytes": len(full)}
+        )
+        graded = grade.grade(self.export(spans), self.rules, COMPLETE)
+        self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
+        self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["output", "readOrder"])
+        self.assertIn("of 4515 bytes", graded["reasons"][0])
+
+    def test_an_unsupported_predicate_never_grades(self):
+        graded = grade.grade(self.export(), [{"rule": "fact", "message": 1, "all_of": ["NOT IN ANSWER"]}], COMPLETE)
+        self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
 
     def test_selection_rule_matches_a_selection_event(self):
         spans = synthetic.message_one() + synthetic.message_two()
@@ -115,8 +132,7 @@ class SocketReplyIsNotEvidenceTest(unittest.TestCase):
             spans = synthetic.message_one() + synthetic.message_two()
             spans[-1]["events"][1] = synthetic.answer(synthetic.BASE + 10_199, 1, "I do not remember.", [])
             synthetic.write_lines(root / "trace" / "traces.jsonl", [synthetic.resource_spans("dekopon-gatewayd", spans)])
-            result = completeness.check(root, 2, driver)
-            export = Export.load(root / "trace" / "traces.jsonl", root / "trace" / "logs.jsonl")
+            result, export = completeness.check(root, 2, driver)
             graded = grade.grade(export, synthetic.scenario()["expect"]["rules"], result)
         self.assertEqual(result["status"], "complete")
         self.assertEqual(graded["status"], "failed")

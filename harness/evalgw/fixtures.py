@@ -70,6 +70,7 @@ class Fixture:
         self.requests: list[dict[str, Any]] = []
         self.violations: list[str] = []
         self.lock = threading.Lock()
+        self.started = False
         fixture = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -105,12 +106,15 @@ class Fixture:
 
     def start(self) -> "Fixture":
         self.thread.start()
+        self.started = True
         return self
 
     def stop(self) -> None:
-        self.server.shutdown()
+        """Safe before start: `shutdown()` waits for a serve loop that would never come."""
+        if self.started:
+            self.server.shutdown()
+            self.thread.join(timeout=10)
         self.server.server_close()
-        self.thread.join(timeout=10)
 
     def respond(self, method: str, path: str, raw: bytes) -> tuple[int, Any]:
         raise NotImplementedError

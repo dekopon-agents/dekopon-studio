@@ -24,7 +24,6 @@ from . import artifacts, completeness, grade, scenario as scenarios
 from .bundle import Bundle, now, sha256, write_json
 from .collector import CONFIG as COLLECTOR_CONFIG, Collector
 from .fixtures import Service, StubModel
-from .otlp import Export, ExportError
 
 READY_SECONDS = 60
 BROKER_STOP_SECONDS = 25
@@ -127,8 +126,8 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
     freeze = None
     started: list[tuple[str, subprocess.Popen[bytes], float]] = []
     handles = []
-    model = StubModel(scenario["model"]["completions"])
-    service = Service(scenario["service"]["routes"])
+    # Fixtures bind their sockets inside the try, so a failure there still finalizes the attempt.
+    fixtures: dict[str, StubModel | Service] = {}
     collector = Collector(f"evalgw-{attempt}", output.resolve(), runtime / "collector.yaml")
     try:
         binaries = artifacts.daemons(cache)
@@ -144,6 +143,8 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
         scenarios.write_private(runtime / "collector.yaml", COLLECTOR_CONFIG)
         shutil.copyfile(runtime / "collector.yaml", bundle.path("config/collector.yaml"))
         collector.start()
+        model = fixtures["model"] = StubModel(scenario["model"]["completions"])
+        service = fixtures["service"] = Service(scenario["service"]["routes"])
         model.start()
         service.start()
         config = scenarios.assemble(
@@ -155,6 +156,8 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
             collector_endpoint=collector.endpoint,
             uid=os.geteuid(),
         )
+        # Refuse before any daemon starts: every HTTP grant and provider endpoint is the fixture.
+        scenarios.check_assembled(config, scenario["providers"], service.authority)
         files = {
             "catalog.json": json.dumps(config["catalog"], indent=2),
             "policies.cedar": config["policies"],
@@ -212,9 +215,9 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
             copy_journal(runtime, bundle)
         for handle in handles:
             handle.close()
-        model.stop()
-        service.stop()
-        driver["fixtures"] = {"model": model.record(), "service": service.record()}
+        for name, fixture in fixtures.items():
+            fixture.stop()
+            driver["fixtures"][name] = fixture.record()
         try:
             collector_record.update(collector.stop(bundle.path("stdout/collector.log")))
         except Exception as error:
@@ -240,11 +243,7 @@ def finish(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Completeness, grade and the final manifest for a bundle whose evidence is on disk."""
     sent = len(scenario["messages"])
-    result = completeness.check(bundle.root, sent, driver)
-    try:
-        export: Export | None = Export.load(bundle.path("trace/traces.jsonl"), bundle.path("trace/logs.jsonl"))
-    except (ExportError, KeyError, TypeError, ValueError):
-        export = None
+    result, export = completeness.check(bundle.root, sent, driver)
     graded = grade.grade(export, scenario["expect"]["rules"], result)
     write_json(bundle.path("grade.json"), graded)
     gaps = list(STANDING_GAPS)

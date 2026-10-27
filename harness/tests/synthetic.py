@@ -69,6 +69,11 @@ def answer(time: int, turn: int, text: str, tool_calls: list[Any]) -> dict[str, 
     )
 
 
+def captured(key: str, text: str) -> dict[str, Any]:
+    """A bounded shell attribute exported whole: its recorded length equals what was captured."""
+    return {key: text, f"{key}.bytes": len(text.encode("utf-8"))}
+
+
 def user(text: str) -> dict[str, Any]:
     return {"role": "user", "content": text}
 
@@ -104,8 +109,8 @@ def message_one() -> list[dict[str, Any]]:
             attrs={
                 "shell.command.name": "gh",
                 "shell.command.kind": "provider",
-                "shell.command.arguments": json.dumps(["repo", "view", "synthetic-org/fixture-repo"]),
-                "shell.command.output": '{"defaultBranch":"trunk-synthetic"}',
+                **captured("shell.command.arguments", json.dumps(["repo", "view", "synthetic-org/fixture-repo"])),
+                **captured("shell.command.output", '{"defaultBranch":"trunk-synthetic"}'),
                 "shell.command.exit_code": 0,
                 "outcome": "succeeded",
             },

@@ -1,5 +1,6 @@
 import json
 import sys
+import threading
 import unittest
 import urllib.error
 import urllib.request
@@ -27,6 +28,59 @@ class ScenarioTest(unittest.TestCase):
         data = synthetic.scenario()
         data["messages"][0]["text"] = "x" * (scenarios.MAX_TEXT_BYTES + 1)
         with self.assertRaisesRegex(scenarios.ScenarioError, "exceeds"):
+            scenarios.validate(data)
+
+    def test_a_provider_without_a_fixture_origin_is_refused(self):
+        data = synthetic.scenario()
+        del data["broker"]["providerSettings"]["gh"]["baseUrl"]
+        data["broker"]["capabilities"]["gh"]["constraints"]["http"]["allowedHosts"] = ["api.github.com"]
+        with self.assertRaisesRegex(scenarios.ScenarioError, "fixture service origin"):
+            scenarios.validate(data)
+
+    def test_a_grant_beyond_the_fixture_authority_is_refused(self):
+        data = synthetic.scenario()
+        data["broker"]["capabilities"]["gh"]["capabilities"]["gh.repo.read"] = {
+            "constraints": {"http": {"allowedHosts": ["{{service.authority}}", "api.github.com"]}}
+        }
+        with self.assertRaisesRegex(scenarios.ScenarioError, "exactly the fixture authority"):
+            scenarios.validate(data)
+
+    def test_a_credential_binding_is_refused(self):
+        data = synthetic.scenario()
+        data["broker"]["capabilities"]["gh"]["credential"] = "api-token"
+        with self.assertRaisesRegex(scenarios.ScenarioError, "credential is not allowed"):
+            scenarios.validate(data)
+
+    def test_launch_config_admits_only_the_fixture_authority(self):
+        arguments = dict(
+            providers={"gh": Path("/cache/gh-provider.wasm")}, model_authority="127.0.0.1:4001",
+            service_authority="127.0.0.1:4002", collector_endpoint="http://127.0.0.1:4003", uid=1000,
+        )
+        config = scenarios.assemble(synthetic.scenario(), Path("/run/evalgw"), **arguments)
+        scenarios.check_assembled(config, ["gh"], "127.0.0.1:4002")
+        config["broker"]["capabilities"]["gh"]["constraints"]["http"]["allowedHosts"] = ["api.github.com"]
+        with self.assertRaisesRegex(scenarios.ScenarioError, "exactly the fixture authority"):
+            scenarios.check_assembled(config, ["gh"], "127.0.0.1:4002")
+        del config["broker"]["providerSettings"]["gh"]
+        with self.assertRaisesRegex(scenarios.ScenarioError, "fixture service origin"):
+            scenarios.check_assembled(config, ["gh"], "127.0.0.1:4002")
+
+    def test_an_unknown_rule_key_is_refused(self):
+        data = synthetic.scenario()
+        data["expect"]["rules"].append({"rule": "fact", "message": 1, "all_of": ["NOT IN ANSWER"]})
+        with self.assertRaisesRegex(scenarios.ScenarioError, r"fact does not support \['all_of'\]"):
+            scenarios.validate(data)
+
+    def test_a_rule_without_a_predicate_is_refused(self):
+        data = synthetic.scenario()
+        data["expect"]["rules"].append({"rule": "fact", "message": 1})
+        with self.assertRaisesRegex(scenarios.ScenarioError, "needs one of"):
+            scenarios.validate(data)
+
+    def test_a_rule_value_of_the_wrong_type_is_refused(self):
+        data = synthetic.scenario()
+        data["expect"]["rules"].append({"rule": "output", "message": 1, "count": {"x": [2, 1]}})
+        with self.assertRaisesRegex(scenarios.ScenarioError, "wrong type"):
             scenarios.validate(data)
 
     def test_an_unknown_rule_is_refused(self):
@@ -85,6 +139,13 @@ class FixtureTest(unittest.TestCase):
             model.stop()
         self.assertEqual(status, 500)
         self.assertIn("lacks", model.record()["violations"][0])
+
+    def test_stopping_a_fixture_that_never_started_returns(self):
+        for fixture in (StubModel([]), Service([])):
+            stopper = threading.Thread(target=fixture.stop, daemon=True)
+            stopper.start()
+            stopper.join(timeout=5)
+            self.assertFalse(stopper.is_alive(), f"{fixture.name} stop() hung before start()")
 
     def test_service_answers_only_exact_routes(self):
         service = Service(synthetic.scenario()["service"]["routes"]).start()

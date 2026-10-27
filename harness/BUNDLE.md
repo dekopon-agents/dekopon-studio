@@ -78,6 +78,12 @@ records from both and drops a log record that repeats a span event (same trace, 
 attributes). Each message's evidence is everything in its `gateway.message` trace; message ordinals
 follow anchor start times. The socket reply line is transport evidence only and is never graded.
 
+`shell.command.output` and `.arguments` are bounded at 4096 bytes by dekopon, which records the
+original length as `<field>.bytes`. A rule reads them only when that length equals the captured text;
+a truncated value, or one without its length, is a gap. Rules are validated against a fixed schema
+(unknown keys, missing predicates and wrong types are refused) before a scenario runs and again in
+offline regrading; an invalid rule never grades. Malformed OTLP shapes are `export_malformed`.
+
 `grade.json`: `gradeVersion: 1`, `status` (`passed`, `failed` or `infrastructure_error`), `score`
 (`1.0`, `0.0` or `null`), `reasons`, and per-rule `rules` results (`pass`, `fail`, `gap`). An incomplete
 bundle, or any rule whose evidence field is absent, is `infrastructure_error` with `score: null`.

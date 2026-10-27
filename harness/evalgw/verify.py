@@ -3,34 +3,44 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import completeness, grade
+from . import completeness, grade, scenario as scenarios
 from .bundle import MANIFEST, sha256
-from .otlp import Export, ExportError
 
 
 def regrade(root: Path) -> dict[str, Any]:
-    """Recompute the grade from on-disk evidence. A manifest whose hashes no longer match is an
-    infrastructure error: the evidence is not what the run recorded."""
+    """Recompute the grade from on-disk evidence. Anything that stops a structured grade (an
+    unreadable file, a hash that no longer matches, an invalid scenario, an unexpected error) is an
+    infrastructure error, never a model result."""
+    try:
+        return _regrade(root)
+    except Exception as error:
+        return _infrastructure(f"regrade failed: {type(error).__name__}: {error}")
+
+
+def _regrade(root: Path) -> dict[str, Any]:
     try:
         manifest = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
         scenario = json.loads((root / "config" / "scenario.json").read_text(encoding="utf-8"))
         driver = json.loads((root / "driver.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return _infrastructure(f"bundle unreadable: {error}")
-    if manifest.get("bundleVersion") != 1 or manifest.get("kind") != "trial":
+    if not isinstance(manifest, dict) or manifest.get("bundleVersion") != 1 or manifest.get("kind") != "trial":
         return _infrastructure("not a version 1 trial bundle")
     for reference in _references(manifest):
-        path = root / reference["path"]
+        relative = PurePosixPath(reference["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            return _infrastructure(f"{reference['path']} escapes the bundle")
+        path = root.joinpath(*relative.parts)
         if not path.is_file() or sha256(path) != reference["sha256"]:
             return _infrastructure(f"{reference['path']} does not match its manifest hash")
-    result = completeness.check(root, len(scenario["messages"]), driver)
     try:
-        export: Export | None = Export.load(root / "trace" / "traces.jsonl", root / "trace" / "logs.jsonl")
-    except (ExportError, KeyError, TypeError, ValueError):
-        export = None
+        scenarios.validate(scenario)
+    except scenarios.ScenarioError as error:
+        return _infrastructure(f"scenario invalid: {error}")
+    result, export = completeness.check(root, len(scenario["messages"]), driver)
     return grade.grade(export, scenario["expect"]["rules"], result)
 
 

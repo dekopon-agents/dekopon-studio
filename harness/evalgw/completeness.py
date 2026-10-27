@@ -142,7 +142,7 @@ def driver_failures(driver: dict[str, Any] | None, sent: int) -> list[Reason]:
 def export_evidence(trace: Path, logs: Path, sent: int) -> tuple[list[Reason], Export | None]:
     try:
         export = Export.load(trace, logs)
-    except (ExportError, KeyError, TypeError, ValueError) as error:
+    except ExportError as error:
         code = "export_missing" if "missing" in str(error) else "export_malformed"
         return [Reason(code, str(error))], None
     reasons = []
@@ -163,7 +163,8 @@ def export_evidence(trace: Path, logs: Path, sent: int) -> tuple[list[Reason], E
     return reasons, export
 
 
-def check(bundle: Path, sent: int, driver: dict[str, Any] | None) -> dict[str, Any]:
+def check(bundle: Path, sent: int, driver: dict[str, Any] | None) -> tuple[dict[str, Any], Export | None]:
+    """The verdict and the parsed export (None when unreadable), so grading reads the files once."""
     reasons: list[Reason] = []
     for daemon in DAEMONS:
         reasons.extend(
@@ -171,9 +172,10 @@ def check(bundle: Path, sent: int, driver: dict[str, Any] | None) -> dict[str, A
         )
     reasons.extend(collector_errors(bundle / "stdout" / "collector.log"))
     reasons.extend(driver_failures(driver, sent))
-    exported, _ = export_evidence(bundle / "trace" / "traces.jsonl", bundle / "trace" / "logs.jsonl", sent)
+    exported, export = export_evidence(bundle / "trace" / "traces.jsonl", bundle / "trace" / "logs.jsonl", sent)
     reasons.extend(exported)
-    return {
+    result = {
         "status": "incomplete" if reasons else "complete",
         "reasons": [reason.to_json() for reason in reasons],
     }
+    return result, export

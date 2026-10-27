@@ -7,9 +7,10 @@ CI tests do not need Harbor.
   fixtures, Collector) and writes the bundle into the agent's trial logs as `bundle/`. It then uploads
   the bundle, the `evalgw` package and `verify.py` to `/evalgw/` in the task environment.
 - `task/`: a task whose environment is a digest-pinned `python:3.12.12-slim` with no network. Its
-  `tests/test.sh` runs `verify.py` on the uploaded bundle: the same completeness check and grader.
-  `passed` writes reward 1 and `failed` reward 0. An infrastructure error writes no reward and fails
-  the verifier, so Harbor records an error, never a zero model score.
+  `tests/test.sh` runs `verify.py` on the uploaded bundle (the same completeness check and grader),
+  then `tests/reward.py` writes reward 1 or 0 only for a structured `passed`/`failed` grade. An
+  infrastructure error, a crash or missing JSON writes no reward and fails the verifier, so Harbor
+  records an error, never a zero model score.
 
 Install Harbor from the hashed lock (resolved for CPython 3.12 on Linux x86_64):
 

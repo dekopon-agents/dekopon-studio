@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .grade import RULES
+from .grade import RuleError, validate_rule
 
 SCENARIO_VERSION = 1
 BROKER_API = "dekopon.dev/brokerd/v1alpha1"
@@ -30,8 +30,61 @@ REQUIRED = ("scenarioVersion", "id", "agent", "subject", "conversation", "provid
 COMPLETION_PREDICATES = {"lastUserContains", "toolContains", "historyContains"}
 
 
+# Where each pinned provider takes its origin. A scenario may use a provider only when that origin is
+# the attempt's loopback service: the gh provider falls back to api.github.com when baseUrl is absent.
+FIXTURE_ENDPOINTS = {"gh": "baseUrl"}
+BROKER_KEYS = {"capabilities", "providerSettings", "strict"}
+# Credential and secret plumbing has no place in a stub-only trial, at any depth.
+CREDENTIAL_KEYS = {"credential", "credentialsPath", "secretMapPath", "secretUse", "defaultSecretUse"}
+
+
 class ScenarioError(ValueError):
     pass
+
+
+def _grant_problems(broker: Any, providers: list[str], authority: str, origin: str) -> list[str]:
+    """Everything in a broker section that could reach past the fixture service."""
+    if not isinstance(broker, dict):
+        return ["broker is not an object"]
+    problems = [f"broker.{key} is not allowed" for key in sorted(set(broker) - BROKER_KEYS - {
+        "apiVersion", "socketPath", "policiesPath", "providers", "identities", "principals", "telemetry"})]
+    settings = broker.get("providerSettings", {})
+    for provider in providers:
+        key = FIXTURE_ENDPOINTS.get(provider)
+        if key is None:
+            problems.append(f"provider {provider!r} has no fixture-backed endpoint")
+        elif not isinstance(settings, dict) or not isinstance(settings.get(provider), dict) or settings[provider].get(key) != origin:
+            problems.append(f"providerSettings.{provider}.{key} must be the fixture service origin")
+
+    def walk(value: Any, where: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in CREDENTIAL_KEYS:
+                    problems.append(f"{where}.{key} is not allowed")
+                elif key == "allowedHosts" and item != [authority]:
+                    problems.append(f"{where}.allowedHosts must be exactly the fixture authority")
+                elif key == "http" and where == "broker":
+                    problems.append("broker.http is not allowed")
+                else:
+                    walk(item, f"{where}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, f"{where}[{index}]")
+
+    walk(broker, "broker")
+    return problems
+
+
+def check_assembled(config: dict[str, Any], providers: list[str], service_authority: str) -> None:
+    """The configuration about to be launched admits only the attempt's loopback fixtures."""
+    problems = _grant_problems(config["broker"], providers, service_authority, f"http://{service_authority}")
+    if not service_authority.startswith("127.0.0.1:"):
+        problems.append("fixture service is not on loopback")
+    for model in config["gateway"]["models"]:
+        if not str(model.get("endpoint", "")).startswith("http://127.0.0.1:") or "apiKeyEnv" in model:
+            problems.append(f"model {model.get('name')!r} is not the loopback stub")
+    if problems:
+        raise ScenarioError("; ".join(problems))
 
 
 def _strings(value: Any) -> list[str]:
@@ -59,9 +112,13 @@ def validate(scenario: dict[str, Any]) -> None:
     if scenario["scenarioVersion"] != SCENARIO_VERSION:
         raise ScenarioError(f"scenarioVersion must be {SCENARIO_VERSION}")
     for text in _strings(scenario):
-        lowered = text.lower()
-        if "://" in lowered and "{{service.origin}}" not in text:
-            raise ScenarioError(f"scenario names a URL ({text[:60]!r}); only {{{{service.origin}}}} is allowed")
+        if "://" in text:
+            raise ScenarioError(f"scenario names a URL ({text[:60]!r}); use {{{{service.origin}}}}")
+    if not isinstance(scenario["providers"], list) or not all(isinstance(p, str) for p in scenario["providers"]):
+        raise ScenarioError("providers must be a list of names")
+    problems = _grant_problems(scenario["broker"], scenario["providers"], "{{service.authority}}", "{{service.origin}}")
+    if problems:
+        raise ScenarioError("; ".join(problems))
     if not scenario["messages"]:
         raise ScenarioError("scenario sends no messages")
     for index, message in enumerate(scenario["messages"], 1):
@@ -76,9 +133,11 @@ def validate(scenario: dict[str, Any]) -> None:
         if unknown or len(respond) != 1 or not ({"answer", "bash"} & set(respond)):
             raise ScenarioError(f"completion {index} must use known predicates and one answer or bash")
     for index, rule in enumerate(scenario["expect"]["rules"]):
-        if rule.get("rule") not in RULES:
-            raise ScenarioError(f"rule {index} has unknown kind {rule.get('rule')!r}")
-        if not isinstance(rule.get("message"), int) or not 1 <= rule["message"] <= len(scenario["messages"]):
+        try:
+            validate_rule(rule)
+        except RuleError as error:
+            raise ScenarioError(f"rule {index}: {error}") from None
+        if rule["message"] > len(scenario["messages"]):
             raise ScenarioError(f"rule {index} names no sent message")
 
 

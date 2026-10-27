@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import synthetic  # noqa: E402
-from evalgw import completeness, evidence  # noqa: E402
+from evalgw import completeness, evidence, grade  # noqa: E402
 from evalgw.otlp import Export  # noqa: E402
 
 
@@ -22,7 +22,7 @@ class CompletenessTest(unittest.TestCase):
         self.directory.cleanup()
 
     def check(self):
-        return completeness.check(self.root, 2, self.driver)
+        return completeness.check(self.root, 2, self.driver)[0]
 
     def codes(self):
         return [reason["code"] for reason in self.check()["reasons"]]
@@ -81,6 +81,15 @@ class CompletenessTest(unittest.TestCase):
     def test_malformed_log_export_is_incomplete(self):
         (self.root / "trace" / "logs.jsonl").write_text('{"resourceLogs": [\n')
         self.assertEqual(self.codes(), ["export_malformed"])
+
+    def test_a_malformed_otlp_container_is_an_infrastructure_error(self):
+        for shape in ('{"resourceSpans": [null]}', '{"resourceSpans": [{"scopeSpans": {}}]}',
+                      '{"resourceSpans": [{"scopeSpans": [{"spans": [{"attributes": [{"value": {}}]}]}]}]}'):
+            (self.root / "trace" / "traces.jsonl").write_text(shape + "\n")
+            result, export = completeness.check(self.root, 2, self.driver)
+            self.assertEqual([reason["code"] for reason in result["reasons"]], ["export_malformed"], shape)
+            graded = grade.grade(export, synthetic.scenario()["expect"]["rules"], result)
+            self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
 
     def test_forced_kill_is_a_process_failure(self):
         self.driver["processes"]["gateway"] = {"signal": "SIGTERM", "forcedKill": True, "exitCode": -9}

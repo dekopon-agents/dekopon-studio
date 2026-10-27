@@ -40,7 +40,11 @@ A scenario is JSON data, never code: catalog agent fields, broker `capabilities`
 `providerSettings`, Cedar policy lines, gateway route settings, ordered messages, scripted stub
 completions (each with request predicates and one `answer` or `bash` response), exact service routes,
 and grading rules. External URLs are refused; the only substitutions are the attempt's loopback values
-(`{{service.authority}}`, `{{service.origin}}`) and `{{principal}}`, `{{agent}}`.
+(`{{service.authority}}`, `{{service.origin}}`) and `{{principal}}`, `{{agent}}`. Every provider must
+take its origin from the fixture service (`providerSettings.gh.baseUrl: "{{service.origin}}"`), every
+`allowedHosts` must be exactly `["{{service.authority}}"]`, and no credential or secret binding is
+accepted. The assembled configuration is checked again, with real loopback values, before any daemon
+starts.
 
 The acceptance scenario, `scenarios/two-message.json`, makes one authorized `gh repo view` read
 through brokerd against the synthetic service, then asks the agent to recall that fact on a
