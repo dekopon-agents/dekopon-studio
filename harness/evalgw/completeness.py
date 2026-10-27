@@ -8,13 +8,12 @@ infrastructure error: it never yields a model score.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import evidence
-from .otlp import Export, ExportError
+from .otlp import Export, ExportError, embedded_json
 
 DAEMONS = ("gateway", "broker")
 
@@ -53,11 +52,7 @@ def console_signals(daemon: str, stdout: Path, stderr: Path) -> list[Reason]:
         if not raw.strip():
             continue
         where = f"{daemon} stdout line {number}"
-        try:
-            line = json.loads(raw)
-        except json.JSONDecodeError:
-            reasons.append(Reason("console_malformed", f"{where} is not JSON"))
-            continue
+        line = embedded_json(raw.decode("utf-8", "replace"))
         if not isinstance(line, dict):
             reasons.append(Reason("console_malformed", f"{where} is not a JSON object"))
             continue
@@ -68,10 +63,7 @@ def console_signals(daemon: str, stdout: Path, stderr: Path) -> list[Reason]:
     for number, raw in enumerate(stderr.read_bytes().splitlines(), 1):
         text = raw.decode("utf-8", "replace")
         where = f"{daemon} stderr line {number}"
-        try:
-            line = json.loads(text)
-        except json.JSONDecodeError:
-            line = None
+        line = embedded_json(text)
         if isinstance(line, dict):
             reasons.extend(_line_signals(where, line))
             continue

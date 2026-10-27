@@ -144,7 +144,7 @@ class StubModel(Fixture):
         try:
             request = json.loads(raw)
             messages = request["messages"]
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, RecursionError):
             self.violations.append(f"request {index}: not a chat completion request")
             return 400, {"error": "not a chat completion request"}
         entry["messageCount"] = len(messages)

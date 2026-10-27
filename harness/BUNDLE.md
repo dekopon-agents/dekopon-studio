@@ -64,7 +64,8 @@ deadline; the journal is copied after that exit. A forced kill, non-zero exit or
 - Evidence: `message_evidence_missing` (one `gateway.message` span, at least one `agent.model.prompt`
   and a final `agent.model.answer` per sent message), `message_count_discontinuity`.
 - Run: `driver_failure`, `driver_record_missing`, `process_failure`, `reply_missing`, `fixture_violation`,
-  `receiver_failure` (an error-level line in the Collector log, or no log).
+  `receiver_failure` (an error-level line in the Collector log, or no log), `finalization_error` (the
+  check itself failed; the attempt is still finished, with an infrastructure-error grade).
 
 `message.count` on `agent.model.prompt` is the transcript length, not a sequence number. Prompts are
 grouped by model session (the `prompt.session` parent of each `prompt.model_turn` span). Within a
@@ -82,7 +83,11 @@ follow anchor start times. The socket reply line is transport evidence only and 
 original length as `<field>.bytes`. A rule reads them only when that length equals the captured text;
 a truncated value, or one without its length, is a gap. Rules are validated against a fixed schema
 (unknown keys, missing predicates and wrong types are refused) before a scenario runs and again in
-offline regrading; an invalid rule never grades. Malformed OTLP shapes are `export_malformed`.
+offline regrading; an invalid rule never grades. Malformed OTLP shapes are `export_malformed`: every scalar the reader takes from an export (strings,
+fixed64 timestamps, int64 and finite double values, booleans) goes through one validating conversion,
+AnyValue nesting is bounded at 32 levels, an explicit `null` in a parsed field is refused (the Collector
+never writes one; an absent field keeps its default), and JSON that cannot be decoded (including CPython's integer
+digit limit and deep nesting) is malformed, never a crash.
 
 `grade.json`: `gradeVersion: 1`, `status` (`passed`, `failed` or `infrastructure_error`), `score`
 (`1.0`, `0.0` or `null`), `reasons`, and per-rule `rules` results (`pass`, `fail`, `gap`). An incomplete

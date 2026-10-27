@@ -21,11 +21,10 @@ with a null score, never a model failure. An incomplete bundle is graded the sam
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from . import evidence
-from .otlp import Export, Span
+from .otlp import Export, Span, embedded_json
 
 GRADE_VERSION = 1
 
@@ -150,10 +149,7 @@ def _captured(span: Span, key: str) -> str:
 
 def _arguments(span: Span) -> list[str]:
     raw = _captured(span, "shell.command.arguments")
-    try:
-        decoded = json.loads(raw) if isinstance(raw, str) else raw
-    except json.JSONDecodeError:
-        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} arguments are bounded or malformed") from None
+    decoded = embedded_json(raw)
     if not isinstance(decoded, list):
         raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} arguments are not a list")
     return [str(item) for item in decoded]

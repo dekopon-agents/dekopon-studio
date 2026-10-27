@@ -85,7 +85,9 @@ class CompletenessTest(unittest.TestCase):
     def test_a_malformed_otlp_container_is_an_infrastructure_error(self):
         for shape in ('{"resourceSpans": [null]}', '{"resourceSpans": [{"scopeSpans": {}}]}',
                       '{"resourceSpans": [{"scopeSpans": [{"spans": [{"attributes": [{"value": {}}]}]}]}]}',
-                      '{"resourceSpans": [{"scopeSpans": [{"spans": [{"startTimeUnixNano": ' + "9" * 4301 + '}]}]}]}'):
+                      '{"resourceSpans": [{"scopeSpans": [{"spans": [{"startTimeUnixNano": ' + "9" * 4301 + '}]}]}]}',
+                      '{"resourceSpans": [{"scopeSpans": [{"spans": [{"attributes": [{"key": "k", "value": {"doubleValue": '
+                      + "9" * 309 + '}}]}]}]}]}'):
             (self.root / "trace" / "traces.jsonl").write_text(shape + "\n")
             result, export = completeness.check(self.root, 2, self.driver)
             self.assertEqual([reason["code"] for reason in result["reasons"]], ["export_malformed"], shape)

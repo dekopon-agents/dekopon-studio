@@ -243,8 +243,14 @@ def finish(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Completeness, grade and the final manifest for a bundle whose evidence is on disk."""
     sent = len(scenario["messages"])
-    result, export = completeness.check(bundle.root, sent, driver)
-    graded = grade.grade(export, scenario["expect"]["rules"], result)
+    try:
+        result, export = completeness.check(bundle.root, sent, driver)
+        graded = grade.grade(export, scenario["expect"]["rules"], result)
+    except Exception as error:  # A finalization defect is still an unscored, finished attempt.
+        detail = f"{type(error).__name__}: {error}"
+        result = {"status": "incomplete", "reasons": [{"code": "finalization_error", "detail": detail}]}
+        graded = {"gradeVersion": grade.GRADE_VERSION, "status": "infrastructure_error", "score": None,
+                  "reasons": [f"finalization_error: {detail}"], "rules": []}
     write_json(bundle.path("grade.json"), graded)
     gaps = list(STANDING_GAPS)
     if not bundle.journal_files():
