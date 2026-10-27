@@ -1,0 +1,18 @@
+schema_version = "1.4"
+
+[task]
+name = "local/evalgw-two-message"
+version = "1.0.0"
+description = "evalgw: one scenario on stock Dekopon daemons, graded offline from its trial bundle"
+
+[verifier]
+timeout_sec = 120
+
+[agent]
+timeout_sec = 600
+
+[environment]
+network_mode = "no-network"
+workdir = "/evalgw"
+cpus = 1
+memory_mb = 512

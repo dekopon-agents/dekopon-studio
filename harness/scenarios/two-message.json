@@ -1,0 +1,200 @@
+{
+  "scenarioVersion": 1,
+  "id": "two-message-gh-recall",
+  "description": "Message 1 reads a synthetic repository through the released gh provider under broker authority; message 2 recalls the fact from the journal-backed conversation. gh 0.10.0 `repo view` prints `full_name<TAB>description`, so the fact lives in the description.",
+  "agent": {
+    "name": "evalgw-agent",
+    "description": "Answers questions about a synthetic repository under broker authority",
+    "enabled": true,
+    "instructions": "Answer in one short sentence. Use the gh command to read repository facts. You have no authority of your own.",
+    "modelClass": "reasoning"
+  },
+  "subject": {
+    "external": "tel.10000000001",
+    "principal": "synthetic-user"
+  },
+  "conversation": {
+    "kind": "directMessage",
+    "id": "evalgw"
+  },
+  "providers": [
+    "gh"
+  ],
+  "broker": {
+    "capabilities": {
+      "gh": {
+        "constraints": {
+          "timeoutMs": 15000,
+          "http": {
+            "allowedHosts": [
+              "{{service.authority}}"
+            ],
+            "allowedMethods": [
+              "GET"
+            ],
+            "maxRequests": 1,
+            "maxRequestBytes": 4096,
+            "maxResponseBytes": 65536,
+            "allowPlaintextLoopback": true
+          }
+        },
+        "capabilities": {
+          "gh.repo.read": {}
+        }
+      }
+    },
+    "providerSettings": {
+      "gh": {
+        "baseUrl": "{{service.origin}}"
+      }
+    }
+  },
+  "policies": [
+    "@id(\"evalgw-subject-may-prompt-agent\")",
+    "permit(principal == Dekopon::Principal::\"{{principal}}\",",
+    "       action == Dekopon::Action::\"agent.prompt\",",
+    "       resource == Dekopon::Agent::\"{{agent}}\")",
+    "when { context has via && context.via == \"dekopon-gatewayd\" };",
+    "",
+    "@id(\"evalgw-agent-may-read-repository\")",
+    "permit(principal == Dekopon::Principal::\"{{principal}}\",",
+    "       action == Dekopon::Action::\"gh.repo.read\",",
+    "       resource == Dekopon::Provider::\"gh\")",
+    "when { context has via && context.via == \"dekopon-gatewayd\"",
+    "       && context has agent && context.agent == \"{{agent}}\" };"
+  ],
+  "gateway": {
+    "route": {
+      "limits": {
+        "maxSteps": 4,
+        "maxCapabilityCalls": 2
+      },
+      "memory": {
+        "mode": "persistent",
+        "recall": "journal"
+      }
+    },
+    "sessions": {
+      "maxConcurrent": 1
+    },
+    "shutdownGraceMs": 15000
+  },
+  "model": {
+    "model": "evalgw-stub",
+    "completions": [
+      {
+        "expect": {
+          "lastUserContains": "description of synthetic-org/fixture-repo"
+        },
+        "respond": {
+          "bash": "gh repo view synthetic-org/fixture-repo"
+        }
+      },
+      {
+        "expect": {
+          "toolContains": "ledger-of-tides"
+        },
+        "respond": {
+          "answer": "The description of synthetic-org/fixture-repo is: Synthetic evalgw fixture: ledger-of-tides."
+        }
+      },
+      {
+        "expect": {
+          "lastUserContains": "Which description did you report",
+          "historyContains": "ledger-of-tides"
+        },
+        "respond": {
+          "answer": "I reported the description Synthetic evalgw fixture: ledger-of-tides."
+        }
+      }
+    ]
+  },
+  "service": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/repos/synthetic-org/fixture-repo",
+        "status": 200,
+        "json": {
+          "name": "fixture-repo",
+          "full_name": "synthetic-org/fixture-repo",
+          "owner": {
+            "login": "synthetic-org"
+          },
+          "private": false,
+          "visibility": "public",
+          "default_branch": "trunk-synthetic",
+          "fork": false,
+          "archived": false,
+          "description": "Synthetic evalgw fixture: ledger-of-tides",
+          "html_url": "",
+          "created_at": "2026-01-01T00:00:00Z",
+          "pushed_at": "2026-01-02T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z"
+        }
+      }
+    ]
+  },
+  "messages": [
+    {
+      "text": "What is the description of synthetic-org/fixture-repo?"
+    },
+    {
+      "text": "Which description did you report a moment ago?"
+    }
+  ],
+  "expect": {
+    "rules": [
+      {
+        "rule": "script",
+        "message": 1,
+        "allOf": [
+          "gh repo view synthetic-org/fixture-repo"
+        ],
+        "max": 1,
+        "command": "gh",
+        "argumentsContain": [
+          "repo",
+          "view",
+          "synthetic-org/fixture-repo"
+        ],
+        "outcome": "succeeded",
+        "exitCode": 0
+      },
+      {
+        "rule": "output",
+        "message": 1,
+        "count": {
+          "ledger-of-tides": [
+            1,
+            1
+          ]
+        }
+      },
+      {
+        "rule": "readOrder",
+        "message": 1,
+        "pairs": [
+          [
+            "repo view",
+            "ledger-of-tides"
+          ]
+        ]
+      },
+      {
+        "rule": "fact",
+        "message": 1,
+        "allOf": [
+          "ledger-of-tides"
+        ]
+      },
+      {
+        "rule": "fact",
+        "message": 2,
+        "allOf": [
+          "ledger-of-tides"
+        ]
+      }
+    ]
+  }
+}
