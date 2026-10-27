@@ -103,6 +103,19 @@ def _line_signals(where: str, line: dict[str, Any]) -> list[Reason]:
     return reasons
 
 
+def collector_errors(log: Path) -> list[Reason]:
+    """The Collector's console uses zap's tab-separated encoder; an `error` level line means an
+    export may not have reached its file even when the process exits 0."""
+    if not log.is_file():
+        return [Reason("receiver_failure", "collector log was not captured")]
+    reasons = []
+    for number, raw in enumerate(log.read_bytes().splitlines(), 1):
+        fields = raw.decode("utf-8", "replace").split("\t")
+        if len(fields) > 1 and fields[1].strip().lower() in ("error", "dpanic", "panic", "fatal"):
+            reasons.append(Reason("receiver_failure", f"collector log line {number}: {fields[1].strip()}"))
+    return reasons
+
+
 def driver_failures(driver: dict[str, Any] | None, sent: int) -> list[Reason]:
     if driver is None:
         return [Reason("driver_record_missing", "driver.json was not written")]
@@ -156,6 +169,7 @@ def check(bundle: Path, sent: int, driver: dict[str, Any] | None) -> dict[str, A
         reasons.extend(
             console_signals(daemon, bundle / "stdout" / f"{daemon}.jsonl", bundle / "stdout" / f"{daemon}.stderr")
         )
+    reasons.extend(collector_errors(bundle / "stdout" / "collector.log"))
     reasons.extend(driver_failures(driver, sent))
     exported, _ = export_evidence(bundle / "trace" / "traces.jsonl", bundle / "trace" / "logs.jsonl", sent)
     reasons.extend(exported)

@@ -103,6 +103,12 @@ def converse(path: Path, scenario: dict[str, Any], record: list[dict[str, Any]])
                 entry["reply"] = json.loads(reply)
 
 
+def copy_journal(runtime: Path, bundle: Bundle) -> str:
+    """Verbatim copy of the gateway journal, taken only once the gateway has exited."""
+    shutil.copytree(runtime / "journal", bundle.path("journal"), dirs_exist_ok=True)
+    return now()
+
+
 def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     scenario = scenarios.load(scenario_path)
     attempt = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
@@ -182,8 +188,7 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
         driver["processes"]["gateway"] = stop(gateway, drain)
         driver["processes"]["broker"] = stop(broker, BROKER_STOP_SECONDS)
         started.clear()
-        shutil.copytree(runtime / "journal", bundle.path("journal"), dirs_exist_ok=True)
-        copied = now()
+        copied = copy_journal(runtime, bundle)
         gateway_record = driver["processes"]["gateway"]
         if gateway_record["exitCode"] == 0 and not gateway_record["forcedKill"]:
             stems = sorted(
@@ -202,6 +207,9 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
     finally:
         for name, process, seconds in started:
             driver["processes"][name] = stop(process, seconds)
+        if started:
+            # A failed attempt keeps whatever journal exists; without a clean drain it is no freeze.
+            copy_journal(runtime, bundle)
         for handle in handles:
             handle.close()
         model.stop()

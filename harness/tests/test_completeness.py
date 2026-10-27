@@ -90,6 +90,11 @@ class CompletenessTest(unittest.TestCase):
         self.driver["fixtures"]["model"]["violations"] = ["request 3: beyond the 3 scripted completions"]
         self.assertEqual(self.codes(), ["fixture_violation"])
 
+    def test_collector_export_error_is_a_receiver_failure(self):
+        with (self.root / "stdout" / "collector.log").open("a") as handle:
+            handle.write("2026-10-27T00:00:00.000Z\terror\tfileexporter\tfailed to write\n")
+        self.assertEqual(self.codes(), ["receiver_failure"])
+
     def test_unreplied_message_is_incomplete(self):
         self.driver["messages"][1]["reply"] = None
         self.assertEqual(self.codes(), ["reply_missing"])

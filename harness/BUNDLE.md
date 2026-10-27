@@ -63,7 +63,8 @@ deadline; the journal is copied after that exit. A forced kill, non-zero exit or
 - Exports: `export_missing`, `export_malformed`.
 - Evidence: `message_evidence_missing` (one `gateway.message` span, at least one `agent.model.prompt`
   and a final `agent.model.answer` per sent message), `message_count_discontinuity`.
-- Run: `driver_failure`, `driver_record_missing`, `process_failure`, `reply_missing`, `fixture_violation`.
+- Run: `driver_failure`, `driver_record_missing`, `process_failure`, `reply_missing`, `fixture_violation`,
+  `receiver_failure` (an error-level line in the Collector log, or no log).
 
 `message.count` on `agent.model.prompt` is the transcript length, not a sequence number. Prompts are
 grouped by model session (the `prompt.session` parent of each `prompt.model_turn` span). Within a
