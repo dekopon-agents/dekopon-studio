@@ -11,11 +11,12 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any
 
 from harbor.agents.base import BaseAgent
+from harbor.agents.options import AgentOptions
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+from pydantic import Field
 
 HARNESS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HARNESS))
@@ -26,11 +27,12 @@ from evalgw import driver  # noqa: E402
 ENVIRONMENT_ROOT = "/evalgw"
 
 
+class Options(AgentOptions):
+    scenario: str = Field(default="two-message.json", description="Scenario file under harness/scenarios/")
+
+
 class EvalgwHostAgent(BaseAgent):
-    def __init__(self, logs_dir: Path, scenario: str = "two-message.json", cache: str | None = None, **kwargs: Any) -> None:
-        super().__init__(logs_dir=logs_dir, **kwargs)
-        self.scenario = HARNESS / "scenarios" / Path(scenario).name
-        self.cache = Path(cache) if cache else HARNESS / ".cache"
+    options_model = Options
 
     @staticmethod
     def name() -> str:
@@ -43,8 +45,11 @@ class EvalgwHostAgent(BaseAgent):
         return
 
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
+        scenario = (HARNESS / "scenarios" / self.options.scenario).resolve()
+        if scenario.parent != (HARNESS / "scenarios").resolve() or not scenario.is_file():
+            raise ValueError(f"unknown scenario {self.options.scenario!r}")
         bundle = self.logs_dir / "bundle"
-        manifest, graded = await asyncio.to_thread(driver.run, self.scenario, bundle, self.cache)
+        manifest, graded = await asyncio.to_thread(driver.run, scenario, bundle, HARNESS / ".cache")
         await environment.upload_dir(bundle, f"{ENVIRONMENT_ROOT}/bundle")
         await environment.upload_dir(HARNESS / "evalgw", f"{ENVIRONMENT_ROOT}/evalgw")
         await environment.upload_file(HARNESS / "verify.py", f"{ENVIRONMENT_ROOT}/verify.py")

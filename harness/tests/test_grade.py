@@ -41,12 +41,28 @@ class GradeTest(unittest.TestCase):
         self.assertEqual((graded["status"], graded["score"]), ("failed", 0.0))
         self.assertEqual([item["index"] for item in graded["rules"] if item["result"] == "fail"], [4])
 
-    def test_a_read_after_the_answer_fails_read_order(self):
+    def test_an_output_before_its_read_fails_read_order(self):
         spans = synthetic.message_one() + synthetic.message_two()
-        spans[3]["endTimeUnixNano"] = str(synthetic.BASE + 800)  # gh ends after the turn-2 answer
-        graded = grade.grade(self.export(spans), self.rules, COMPLETE)
-        self.assertEqual(graded["status"], "failed")
-        self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "fail"], ["readOrder"])
+        echo = synthetic.span(
+            "a1" * 16, "1000000000000006", "1000000000000002", "shell.command",
+            synthetic.BASE + 250, synthetic.BASE + 260,
+            attrs={"shell.command.name": "echo", "shell.command.arguments": '["trunk-synthetic"]',
+                   "shell.command.output": "trunk-synthetic", "shell.command.exit_code": 0, "outcome": "succeeded"},
+        )
+        rules = [rule for rule in self.rules if rule["rule"] == "readOrder"]
+        self.assertEqual(grade.grade(self.export(spans), rules, COMPLETE)["status"], "passed")
+        graded = grade.grade(self.export(spans + [echo]), rules, COMPLETE)
+        self.assertEqual((graded["status"], graded["reasons"]), ("failed", ["rule 0 (readOrder): order:repo view<trunk-synthetic"]))
+
+    def test_script_needles_and_output_counts_follow_the_s4_judge(self):
+        rules = [
+            {"rule": "script", "message": 1, "noneOf": ["REPO VIEW"]},
+            {"rule": "script", "message": 1, "countMax": {"view": 0}},
+            {"rule": "output", "message": 1, "count": {"trunk-synthetic": [2, 3]}},
+            {"rule": "fact", "message": 1, "anyOf": [["main", "TRUNK-SYNTHETIC"]]},
+        ]
+        graded = grade.grade(self.export(), rules, COMPLETE)
+        self.assertEqual([item["result"] for item in graded["rules"]], ["fail", "fail", "fail", "pass"])
 
     def test_an_incomplete_bundle_is_unscored(self):
         incomplete = {"status": "incomplete", "reasons": [{"code": "gateway_sessions_abandoned", "detail": "x"}]}
@@ -59,7 +75,7 @@ class GradeTest(unittest.TestCase):
         spans[3]["attributes"] = [item for item in spans[3]["attributes"] if item["key"] != "shell.command.output"]
         graded = grade.grade(self.export(spans), self.rules, COMPLETE)
         self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
-        self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["output"])
+        self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["output", "readOrder"])
 
     def test_selection_rule_matches_a_selection_event(self):
         spans = synthetic.message_one() + synthetic.message_two()

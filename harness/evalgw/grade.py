@@ -1,14 +1,18 @@
 """Grade a complete trial from structured evidence, never from socket reply lines.
 
-Rules are scenario data (`expect.rules`), each bound to one message ordinal:
+Rules are scenario data (`expect.rules`), each bound to one message ordinal. They follow the S4
+p5 judge (answer facts, script needles, output counts, read order) over native evidence:
 
-- `fact`: the message's final `agent.model.answer` contains every `contains` string and none of
-  `excludes`.
-- `script`: a `shell.command` ran `command` with every `argumentsContain` token, optionally with
-  the given `outcome` and `exitCode`.
-- `output`: a `shell.command` (optionally only `command`) produced output containing every
-  `contains` string.
-- `readOrder`: the `commands` ran in that order and all ended before the final answer.
+- `fact`: the final `agent.model.answer` holds every `allOf` fact and one of each `anyOf` group,
+  case-insensitively.
+- `script`: over the message's `shell.command` lines (word and arguments), case-insensitively:
+  every `allOf` needle, no `noneOf` needle, `countMax` per needle, at most `max` commands; and, when
+  `command` is set, one such command with every `argumentsContain` token and the given `outcome`
+  and `exitCode`.
+- `output`: across `shell.command` outputs (optionally only `command`), each `count` needle appears
+  between its bounds, inclusive.
+- `readOrder`: for each `pairs` entry `[script needle, output needle]`, once an output shows the
+  output needle, a command holding the script needle ran at or before it.
 - `selection`: a `gateway_memory_selection` event carries every `match` attribute.
 
 A rule whose required evidence field is absent is a gap: the grade is `infrastructure_error`
@@ -37,14 +41,14 @@ def _message(messages: list[evidence.Message], ordinal: int) -> evidence.Message
     raise Gap(f"message {ordinal} has no evidence")
 
 
-def _answer(message: evidence.Message) -> tuple[str, int]:
+def _answer(message: evidence.Message) -> str:
     event = message.final_answer()
     if event is None:
         raise Gap(f"message {message.ordinal} has no final {evidence.ANSWER_EVENT}")
     answer = event.attributes.get("answer")
     if not isinstance(answer, str):
         raise Gap(f"message {message.ordinal} final answer has no answer attribute")
-    return answer, event.time
+    return answer
 
 
 def _field(span: Span, key: str) -> Any:
@@ -68,53 +72,67 @@ def _commands(message: evidence.Message, command: str | None) -> list[Span]:
     return [span for span in message.shell if command is None or _field(span, "shell.command.name") == command]
 
 
+def _line(span: Span) -> str:
+    """One command as the model wrote it: its word and arguments."""
+    return " ".join([str(_field(span, "shell.command.name")), *_arguments(span)])
+
+
 def _script(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    for span in _commands(message, rule["command"]):
-        arguments = _arguments(span)
-        if not all(token in arguments for token in rule.get("argumentsContain", [])):
-            continue
-        if "outcome" in rule and _field(span, "outcome") != rule["outcome"]:
-            continue
-        # Exported as an OTLP intValue, which some exporters stringify; compare the number.
-        if "exitCode" in rule and str(_field(span, "shell.command.exit_code")) != str(rule["exitCode"]):
-            continue
-        return True, f"{rule['command']} {' '.join(arguments)}"
-    return False, f"no {rule['command']} command matched"
+    lines = [_line(span) for span in message.shell]
+    lowered = "\n".join(lines).lower()
+    problems = [f"script-missing:{n}" for n in rule.get("allOf", []) if n.lower() not in lowered]
+    problems += [f"script-forbidden:{n}" for n in rule.get("noneOf", []) if n.lower() in lowered]
+    problems += [f"script-count:{n}>{most}" for n, most in rule.get("countMax", {}).items() if lowered.count(n.lower()) > most]
+    if "max" in rule and len(lines) > rule["max"]:
+        problems.append(f"scripts>{rule['max']}")
+    if "command" in rule:
+        matched = False
+        for span in _commands(message, rule["command"]):
+            if not all(token in _arguments(span) for token in rule.get("argumentsContain", [])):
+                continue
+            if "outcome" in rule and _field(span, "outcome") != rule["outcome"]:
+                continue
+            # Exported as an OTLP intValue, which some exporters stringify; compare the number.
+            if "exitCode" in rule and str(_field(span, "shell.command.exit_code")) != str(rule["exitCode"]):
+                continue
+            matched = True
+            break
+        if not matched:
+            problems.append(f"no {rule['command']} command matched")
+    return (not problems), "; ".join(problems) or f"{len(lines)} commands matched"
 
 
 def _output(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    spans = _commands(message, rule.get("command"))
-    for span in spans:
-        output = _field(span, "shell.command.output")
-        if all(text in str(output) for text in rule["contains"]):
-            return True, f"output of {span.attributes.get('shell.command.name')} matched"
-    return False, f"no output among {len(spans)} commands contained {rule['contains']}"
+    outputs = [str(_field(span, "shell.command.output")) for span in _commands(message, rule.get("command"))]
+    problems = []
+    for needle, (least, most) in rule["count"].items():
+        seen = sum(output.count(needle) for output in outputs)
+        if not least <= seen <= most:
+            problems.append(f"output-count:{needle}={seen}")
+    return (not problems), "; ".join(problems) or "output counts in range"
 
 
 def _fact(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    answer, _ = _answer(message)
-    missing = [text for text in rule.get("contains", []) if text not in answer]
-    present = [text for text in rule.get("excludes", []) if text in answer]
-    if missing or present:
-        return False, f"answer missing {missing} or containing {present}"
-    return True, "answer carries the fact"
+    answer = _answer(message)
+    lowered = answer.lower()
+    problems = [f"answer-missing:{fact}" for fact in rule.get("allOf", []) if fact.lower() not in lowered]
+    problems += [f"answer-any-of-missing:{'|'.join(group)}" for group in rule.get("anyOf", [])
+                 if not any(fact.lower() in lowered for fact in group)]
+    return (not problems), "; ".join(problems) or "answer carries the facts"
 
 
 def _read_order(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    _, answered = _answer(message)
-    position = 0
-    last_end = 0
-    for span in message.shell:
-        if position < len(rule["commands"]) and _field(span, "shell.command.name") == rule["commands"][position]:
-            if span.start < last_end:
-                return False, f"{rule['commands'][position]} started before the previous read ended"
-            last_end = span.end
-            position += 1
-    if position < len(rule["commands"]):
-        return False, f"only {position} of {rule['commands']} ran in order"
-    if last_end > answered:
-        return False, "the final answer was given before the last read ended"
-    return True, "reads ran in order before the answer"
+    """For each [script needle, output needle]: once an output shows the needle, a command whose
+    line holds the script needle ran at or before it."""
+    lines = [_line(span).lower() for span in message.shell]
+    outputs = [str(_field(span, "shell.command.output")) for span in message.shell]
+    problems = []
+    for script_needle, output_needle in rule["pairs"]:
+        read = next((i for i, line in enumerate(lines) if script_needle.lower() in line), None)
+        wrote = next((i for i, output in enumerate(outputs) if output_needle in output), None)
+        if wrote is not None and (read is None or read > wrote):
+            problems.append(f"order:{script_needle}<{output_needle}")
+    return (not problems), "; ".join(problems) or "reads ran before their outputs"
 
 
 def _selection(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:

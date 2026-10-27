@@ -112,11 +112,11 @@
   ],
   "expect": {
     "rules": [
-      {"rule": "script", "message": 1, "command": "gh", "argumentsContain": ["repo", "view", "synthetic-org/fixture-repo"], "outcome": "succeeded", "exitCode": 0},
-      {"rule": "output", "message": 1, "command": "gh", "contains": ["trunk-synthetic"]},
-      {"rule": "readOrder", "message": 1, "commands": ["gh"]},
-      {"rule": "fact", "message": 1, "contains": ["trunk-synthetic"]},
-      {"rule": "fact", "message": 2, "contains": ["trunk-synthetic"]}
+      {"rule": "script", "message": 1, "allOf": ["repo view synthetic-org/fixture-repo"], "max": 1, "command": "gh", "argumentsContain": ["repo", "view", "synthetic-org/fixture-repo"], "outcome": "succeeded", "exitCode": 0},
+      {"rule": "output", "message": 1, "command": "gh", "count": {"trunk-synthetic": [1, 4]}},
+      {"rule": "readOrder", "message": 1, "pairs": [["repo view", "trunk-synthetic"]]},
+      {"rule": "fact", "message": 1, "allOf": ["trunk-synthetic"]},
+      {"rule": "fact", "message": 2, "allOf": ["trunk-synthetic"]}
     ]
   }
 }
