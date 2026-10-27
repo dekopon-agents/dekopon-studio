@@ -131,7 +131,7 @@ class FixtureTest(unittest.TestCase):
         model = StubModel(synthetic.scenario()["model"]["completions"][:1]).start()
         try:
             status, body = post(model, "/v1/chat/completions",
-                                {"messages": [{"role": "user", "content": "What is the default branch of synthetic-org/fixture-repo?"}]})
+                                {"messages": [{"role": "user", "content": "What is the description of synthetic-org/fixture-repo?"}]})
             self.assertEqual(status, 200)
             call = body["choices"][0]["message"]["tool_calls"][0]["function"]
             self.assertEqual(json.loads(call["arguments"]), {"command": "gh repo view synthetic-org/fixture-repo"})
@@ -161,7 +161,7 @@ class FixtureTest(unittest.TestCase):
         service = Service(synthetic.scenario()["service"]["routes"]).start()
         try:
             with urllib.request.urlopen(f"http://{service.authority}/repos/synthetic-org/fixture-repo", timeout=5) as response:
-                self.assertEqual(json.loads(response.read())["default_branch"], "trunk-synthetic")
+                self.assertEqual(json.loads(response.read())["description"], synthetic.DESCRIPTION)
             with self.assertRaises(urllib.error.HTTPError):
                 urllib.request.urlopen(f"http://{service.authority}/repos/other/repo", timeout=5)
         finally:

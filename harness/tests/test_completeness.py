@@ -94,6 +94,25 @@ class CompletenessTest(unittest.TestCase):
             graded = grade.grade(export, synthetic.scenario()["expect"]["rules"], result)
             self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
 
+    def test_a_trace_with_two_gateway_message_spans_is_one_message(self):
+        """A queued message opens a second gateway.message span in its own trace (seen on 0.62.0)."""
+        export = completeness.check(self.root, 2, self.driver)[1]
+        messages = evidence.messages(export)
+        self.assertEqual([(m.ordinal, m.anchor.span_id) for m in messages], [(1, "1000000000000001"), (2, "2000000000000001")])
+
+    def test_console_values_of_any_json_type_never_stop_the_check(self):
+        for line in ({"event": {}}, {"audit.event": ["telemetry.console.dropped"]}, {"message": {"a": 1}}, {"level": [], "target": {}}):
+            synthetic.append_console(self.root, "broker", line)
+        self.assertEqual(self.codes(), [])
+
+    def test_non_ascii_digits_in_counts_are_a_discontinuity_not_a_crash(self):
+        spans = synthetic.message_one() + synthetic.message_two()
+        prompt = spans[2]["events"][0]
+        prompt["attributes"] = [item for item in prompt["attributes"] if item["key"] != "message.count"]
+        prompt["attributes"] += synthetic.attributes({"message.count": "²"})
+        synthetic.write_lines(self.root / "trace" / "traces.jsonl", [synthetic.resource_spans("dekopon-gatewayd", spans)])
+        self.assertEqual(self.codes(), ["message_count_discontinuity", "message_count_discontinuity"])
+
     def test_forced_kill_is_a_process_failure(self):
         self.driver["processes"]["gateway"] = {"signal": "SIGTERM", "forcedKill": True, "exitCode": -9}
         self.assertEqual(self.codes(), ["process_failure"])

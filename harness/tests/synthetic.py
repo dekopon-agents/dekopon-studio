@@ -9,10 +9,15 @@ from __future__ import annotations
 import copy
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
 HARNESS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HARNESS))
+
+from evalgw import otlp  # noqa: E402
+
 SCENARIO = HARNESS / "scenarios" / "two-message.json"
 BASE = 1_800_000_000_000_000_000
 
@@ -89,8 +94,26 @@ def resource_spans(service: str, spans: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+FACT = "ledger-of-tides"
+DESCRIPTION = f"Synthetic evalgw fixture: {FACT}"
+# gh 0.10.0 `repo view` prints `full_name<TAB>description` and a newline.
+REPO_VIEW = f"synthetic-org/fixture-repo\t{DESCRIPTION}\n"
+FIRST_ANSWER = f"The description of synthetic-org/fixture-repo is: {DESCRIPTION}."
+
+
+def script_events(time: int, call_id: str, script: str, output: str) -> list[dict[str, Any]]:
+    return [
+        event("agent.tool.script", time, {"audit.event": "agent.tool.script", "gen_ai.tool.call.id": call_id, "script": script}),
+        event("agent.tool.output", time + 50, {"audit.event": "agent.tool.output", "gen_ai.tool.call.id": call_id, "output": output}),
+    ]
+
+
 def message_one() -> list[dict[str, Any]]:
-    """Two model turns in one session: a bash call to gh, then the answer from its output."""
+    """Two model turns in one session: a bash call to gh, then the answer from its output.
+
+    As on stock 0.62.0, the provider command's `shell.command.output` is empty while its stdout
+    reached the script: the text is in `agent.tool.output`.
+    """
     t = BASE
     trace = "a1" * 16
     call = [{"id": "evalgw-call-0", "type": "function", "function": {"name": "bash", "arguments": "{}"}}]
@@ -100,17 +123,18 @@ def message_one() -> list[dict[str, Any]]:
         span(
             trace, "1000000000000003", "1000000000000002", "prompt.model_turn", t + 20, t + 200,
             events=[
-                prompt(t + 21, 1, "full", 2, [{"role": "system", "content": "s"}, user("What is the default branch?")]),
+                prompt(t + 21, 1, "full", 2, [{"role": "system", "content": "s"}, user("What is the description?")]),
                 answer(t + 199, 1, "", call),
             ],
         ),
         span(
-            trace, "1000000000000004", "1000000000000002", "shell.command", t + 300, t + 400,
+            trace, "1000000000000004", "1000000000000006", "shell.command", t + 300, t + 400,
             attrs={
                 "shell.command.name": "gh",
                 "shell.command.kind": "provider",
                 **captured("shell.command.arguments", json.dumps(["repo", "view", "synthetic-org/fixture-repo"])),
-                **captured("shell.command.output", '{"defaultBranch":"trunk-synthetic"}'),
+                **captured("shell.command.output", ""),
+                "shell.command.stdout.bytes": len(REPO_VIEW.encode()),
                 "shell.command.exit_code": 0,
                 "outcome": "succeeded",
             },
@@ -120,31 +144,37 @@ def message_one() -> list[dict[str, Any]]:
             events=[
                 prompt(
                     t + 501, 2, "delta", 4,
-                    [{"role": "assistant", "content": None}, {"role": "tool", "content": "trunk-synthetic"}],
+                    [{"role": "assistant", "content": None}, {"role": "tool", "content": REPO_VIEW}],
                 ),
-                answer(t + 699, 2, "The default branch of synthetic-org/fixture-repo is trunk-synthetic.", []),
+                answer(t + 699, 2, FIRST_ANSWER, []),
             ],
+        ),
+        span(
+            trace, "1000000000000006", "1000000000000002", "prompt.script", t + 250, t + 450,
+            events=script_events(t + 260, "evalgw-call-0", "gh repo view synthetic-org/fixture-repo", REPO_VIEW),
         ),
     ]
 
 
 def message_two() -> list[dict[str, Any]]:
+    """Recall from history; like the real run, the trace holds a second, later gateway.message span."""
     t = BASE + 10_000
     trace = "b2" * 16
     history = [
         {"role": "system", "content": "s"},
-        user("What is the default branch?"),
-        {"role": "assistant", "content": "The default branch of synthetic-org/fixture-repo is trunk-synthetic."},
-        user("Which default branch did you report a moment ago?"),
+        user("What is the description?"),
+        {"role": "assistant", "content": FIRST_ANSWER},
+        user("Which description did you report a moment ago?"),
     ]
     return [
         span(trace, "2000000000000001", "", "gateway.message", t, t + 900),
         span(trace, "2000000000000002", "2000000000000001", "prompt.session", t + 10, t + 800),
+        span(trace, "2000000000000004", "", "gateway.message", t + 850, t + 950),
         span(
             trace, "2000000000000003", "2000000000000002", "prompt.model_turn", t + 20, t + 200,
             events=[
                 prompt(t + 21, 1, "full", 4, history),
-                answer(t + 199, 1, "I reported trunk-synthetic as the default branch.", []),
+                answer(t + 199, 1, f"I reported the description {DESCRIPTION}.", []),
             ],
         ),
     ]

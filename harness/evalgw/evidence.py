@@ -1,8 +1,10 @@
 """Per-message evidence reconstructed from one trial's OTLP export.
 
-A message is anchored by its `gateway.message` span; the driver sends strictly one message at a
-time, so ordering anchors by start time gives message ordinals. Everything in an anchor's trace
-belongs to that message. Model sessions are `prompt.session` spans: each `agent.model.prompt`
+A message is anchored by the earliest `gateway.message` span in its trace (a queued message can
+open a second one in the same trace); the driver sends strictly one message at a time, so ordering
+anchors by start time gives message ordinals. Everything in an anchor's trace belongs to that
+message. Each bash call the model made is one script: its `agent.tool.script` text and its
+`agent.tool.output` result, paired by `gen_ai.tool.call.id`. Model sessions are `prompt.session` spans: each `agent.model.prompt`
 event sits on a `prompt.model_turn` span whose parent is its session.
 """
 
@@ -19,6 +21,9 @@ SHELL_SPAN = "shell.command"
 PROMPT_EVENT = "agent.model.prompt"
 ANSWER_EVENT = "agent.model.answer"
 SELECTION_EVENT = "gateway_memory_selection"
+SCRIPT_EVENT = "agent.tool.script"
+OUTPUT_EVENT = "agent.tool.output"
+CALL_ID = "gen_ai.tool.call.id"
 
 
 @dataclass
@@ -32,6 +37,17 @@ class Prompt:
 
 
 @dataclass
+class Script:
+    """One bash call: what the model ran and everything it got back, unbounded by dekopon."""
+
+    call_id: Any
+    time: int
+    script: Any = None
+    output: Any = None
+    has_output: bool = False
+
+
+@dataclass
 class Message:
     ordinal: int
     anchor: Span
@@ -39,6 +55,7 @@ class Message:
     answers: list[Event] = field(default_factory=list)
     shell: list[Span] = field(default_factory=list)
     selections: list[Event] = field(default_factory=list)
+    scripts: list[Script] = field(default_factory=list)
 
     def final_answer(self) -> Event | None:
         """The last completed answer that proposed no tool call; it is what the person was sent."""
@@ -58,7 +75,8 @@ def _integer(value: Any) -> int | None:
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value.isdigit():
+    # isdigit() admits "²", which int() refuses; only bounded ASCII decimal text is a number here.
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 20:
         return int(value)
     return None
 
@@ -87,13 +105,16 @@ def _prompt(event: Event, spans: dict[tuple[str, str], Span]) -> Prompt:
 
 def messages(export: Export) -> list[Message]:
     spans = export.span_index()
-    anchors = sorted((span for span in export.spans if span.name == ANCHOR_SPAN), key=lambda span: span.start)
+    earliest: dict[str, Span] = {}
+    for span in export.spans:
+        if span.name == ANCHOR_SPAN and (span.trace_id not in earliest or span.start < earliest[span.trace_id].start):
+            earliest[span.trace_id] = span
     by_trace: dict[str, Message] = {}
     ordered = []
-    for ordinal, anchor in enumerate(anchors, 1):
+    for ordinal, anchor in enumerate(sorted(earliest.values(), key=lambda span: span.start), 1):
         message = Message(ordinal=ordinal, anchor=anchor)
         ordered.append(message)
-        by_trace.setdefault(anchor.trace_id, message)
+        by_trace[anchor.trace_id] = message
     for event in export.events():
         message = by_trace.get(event.trace_id)
         if message is None:
@@ -104,6 +125,15 @@ def messages(export: Export) -> list[Message]:
             message.answers.append(event)
         elif event.kind == SELECTION_EVENT:
             message.selections.append(event)
+        elif event.kind == SCRIPT_EVENT:
+            message.scripts.append(Script(event.attributes.get(CALL_ID), event.time, event.attributes.get("script")))
+        elif event.kind == OUTPUT_EVENT:
+            call = event.attributes.get(CALL_ID)
+            script = next((item for item in message.scripts if item.call_id == call and not item.has_output), None)
+            if script is None:  # An output with no script before it: keep it, so grading sees the gap.
+                script = Script(call, event.time)
+                message.scripts.append(script)
+            script.output, script.has_output = event.attributes.get("output"), True
     for span in sorted(export.spans, key=lambda span: span.start):
         message = by_trace.get(span.trace_id)
         if message is not None and span.name == SHELL_SPAN:

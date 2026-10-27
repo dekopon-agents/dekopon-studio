@@ -236,7 +236,12 @@ def assemble(
                 **route,
             }
         ],
-        "sessions": {**scenario["gateway"].get("sessions", {}), "journal": {"path": str(runtime / "journal")}},
+        # gatewayd 0.62.0 requires sessions.assets.path whenever sessions.journal is set.
+        "sessions": {
+            **scenario["gateway"].get("sessions", {}),
+            "journal": {"path": str(runtime / "journal")},
+            "assets": {"path": str(runtime / "assets")},
+        },
         "shutdownGraceMs": scenario["gateway"].get("shutdownGraceMs", 15000),
         "telemetry": {**telemetry, "serviceName": "dekopon-gatewayd"},
     }

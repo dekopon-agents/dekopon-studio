@@ -119,6 +119,7 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
     home = runtime / "home"
     home.mkdir(mode=0o700)
     (runtime / "journal").mkdir(mode=0o700)
+    (runtime / "assets").mkdir(mode=0o700)
     driver: dict[str, Any] = {"attempt": attempt, "messages": [], "processes": {}, "fixtures": {}, "failure": None}
     dekopon: dict[str, Any] = {"version": artifacts.DEKOPON_VERSION, "source": artifacts.DEKOPON.source, "binaries": {}}
     providers: list[dict[str, Any]] = []

@@ -83,7 +83,8 @@ def _line_signals(where: str, line: dict[str, Any]) -> list[Reason]:
     reasons = []
     level = str(line.get("level", "")).upper()
     target = str(line.get("target", ""))
-    names = {line.get("audit.event"), line.get("event"), line.get("message")}
+    # Console values are untrusted JSON: only text can name a signal (and only text is hashable).
+    names = {value for value in (line.get("audit.event"), line.get("event"), line.get("message")) if isinstance(value, str)}
     if target.startswith("opentelemetry") and level in ("WARN", "ERROR"):
         reasons.append(Reason("opentelemetry_diagnostic", f"{where}: {level} from {target}"))
     if CONSOLE_DROPPED in names:

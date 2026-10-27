@@ -5,17 +5,20 @@ p5 judge (answer facts, script needles, output counts, read order) over native e
 
 - `fact`: the final `agent.model.answer` holds every `allOf` fact and one of each `anyOf` group,
   case-insensitively.
-- `script`: over the message's `shell.command` lines (word and arguments), case-insensitively:
-  every `allOf` needle, no `noneOf` needle, `countMax` per needle, at most `max` commands; and, when
-  `command` is set, one such command with every `argumentsContain` token and the given `outcome`
-  and `exitCode`.
-- `output`: across `shell.command` outputs (optionally only `command`), each `count` needle appears
-  between its bounds, inclusive.
-- `readOrder`: for each `pairs` entry `[script needle, output needle]`, once an output shows the
-  output needle, a command holding the script needle ran at or before it.
+- `script`: over the message's scripts (each bash call's `agent.tool.script` text),
+  case-insensitively: every `allOf` needle, no `noneOf` needle, `countMax` per needle, at most `max`
+  scripts; and, when `command` is set, one `shell.command` with that word, every `argumentsContain`
+  token and the given `outcome` and `exitCode`.
+- `output`: across the scripts' `agent.tool.output` results, each `count` needle appears between its
+  bounds, inclusive.
+- `readOrder`: for each `pairs` entry `[script needle, output needle]`, once a script's output shows
+  the output needle, a script holding the script needle ran at or before it.
 - `selection`: a `gateway_memory_selection` event carries every `match` attribute.
 
-A rule whose required evidence field is absent is a gap: the grade is `infrastructure_error`
+Script text and output come from the `agent.tool.*` audit records, which dekopon does not bound;
+`shell.command.output` is not used because a provider command's output can be empty there while its
+stdout reached the script. A rule whose required evidence field is absent, of the wrong type or
+truncated is a gap: the grade is `infrastructure_error`
 with a null score, never a model failure. An incomplete bundle is graded the same way.
 """
 
@@ -74,7 +77,7 @@ SCHEMAS: dict[str, tuple[dict[str, Any], tuple[str, ...]]] = {
         },
         ("allOf", "noneOf", "countMax", "max", "command"),
     ),
-    "output": ({"command": lambda v: isinstance(v, str) and bool(v), "count": _bounds}, ("count",)),
+    "output": ({"count": _bounds}, ("count",)),
     "readOrder": ({"pairs": _pairs}, ("pairs",)),
     "selection": ({"match": lambda v: isinstance(v, dict) and bool(v) and all(isinstance(k, str) for k in v)}, ("match",)),
 }
@@ -126,6 +129,21 @@ def _field(span: Span, key: str) -> Any:
     return span.attributes[key]
 
 
+def _text(span: Span, key: str) -> str:
+    """A string attribute, or a gap: a value of another type is never coerced and compared."""
+    value = _field(span, key)
+    if not isinstance(value, str):
+        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} {key} is not text")
+    return value
+
+
+def _utf8_bytes(text: str, where: str) -> int:
+    try:
+        return len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise Gap(f"{where} is not valid UTF-8 text") from None
+
+
 # dekopon-core MAX_ATTRIBUTE_BYTES at 0.62.0: longer values are cut and marked, and the original
 # length is recorded beside them as `<field>.bytes` (dekopon-shell interp/telemetry.rs record_bounded).
 CAPTURE_BOUND_BYTES = 4096
@@ -133,64 +151,76 @@ CAPTURE_BOUND_BYTES = 4096
 
 def _captured(span: Span, key: str) -> str:
     """A bounded text attribute, only when the export holds all of it."""
-    text = _field(span, key)
+    text = _text(span, key)
     recorded = span.attributes.get(f"{key}.bytes")
-    if not isinstance(text, str):
-        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} {key} is not text")
     if isinstance(recorded, bool) or not isinstance(recorded, int):
         raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} lacks {key}.bytes, so its completeness is unknown")
-    if recorded != len(text.encode("utf-8")) or recorded > CAPTURE_BOUND_BYTES:
-        raise Gap(
-            f"{evidence.SHELL_SPAN} {span.span_id} {key} holds {len(text.encode('utf-8'))} of {recorded} bytes "
-            f"(capture bound {CAPTURE_BOUND_BYTES})"
-        )
+    held = _utf8_bytes(text, f"{evidence.SHELL_SPAN} {span.span_id} {key}")
+    if recorded != held or recorded > CAPTURE_BOUND_BYTES:
+        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} {key} holds {held} of {recorded} bytes (capture bound {CAPTURE_BOUND_BYTES})")
     return text
 
 
 def _arguments(span: Span) -> list[str]:
-    raw = _captured(span, "shell.command.arguments")
-    decoded = embedded_json(raw)
-    if not isinstance(decoded, list):
-        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} arguments are not a list")
-    return [str(item) for item in decoded]
+    decoded = embedded_json(_captured(span, "shell.command.arguments"))
+    if not isinstance(decoded, list) or not all(isinstance(item, str) for item in decoded):
+        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} arguments are not a list of text")
+    return decoded
 
 
-def _commands(message: evidence.Message, command: str | None) -> list[Span]:
-    return [span for span in message.shell if command is None or _field(span, "shell.command.name") == command]
+def _exit_code(span: Span) -> int:
+    value = _field(span, "shell.command.exit_code")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise Gap(f"{evidence.SHELL_SPAN} {span.span_id} shell.command.exit_code is not an integer")
+    return value
 
 
-def _line(span: Span) -> str:
-    """One command as the model wrote it: its word and arguments."""
-    return " ".join([str(_field(span, "shell.command.name")), *_arguments(span)])
+def _scripts(message: evidence.Message, *, outputs: bool) -> list[tuple[str, str]]:
+    """Each script's text and, when needed, its whole output; anything missing or untyped is a gap."""
+    found = []
+    for script in message.scripts:
+        where = f"message {message.ordinal} script {script.call_id!r}"
+        if not isinstance(script.script, str):
+            raise Gap(f"{where} has no {evidence.SCRIPT_EVENT} text")
+        _utf8_bytes(script.script, where)
+        output = ""
+        if outputs:
+            if not script.has_output or not isinstance(script.output, str):
+                raise Gap(f"{where} has no {evidence.OUTPUT_EVENT} text")
+            _utf8_bytes(script.output, where)
+            output = script.output
+        found.append((script.script, output))
+    return found
 
 
 def _script(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    lines = [_line(span) for span in message.shell]
-    lowered = "\n".join(lines).lower()
+    scripts = [text for text, _ in _scripts(message, outputs=False)]
+    lowered = "\n".join(scripts).lower()
     problems = [f"script-missing:{n}" for n in rule.get("allOf", []) if n.lower() not in lowered]
     problems += [f"script-forbidden:{n}" for n in rule.get("noneOf", []) if n.lower() in lowered]
     problems += [f"script-count:{n}>{most}" for n, most in rule.get("countMax", {}).items() if lowered.count(n.lower()) > most]
-    if "max" in rule and len(lines) > rule["max"]:
+    if "max" in rule and len(scripts) > rule["max"]:
         problems.append(f"scripts>{rule['max']}")
     if "command" in rule:
         matched = False
-        for span in _commands(message, rule["command"]):
+        for span in message.shell:
+            if _text(span, "shell.command.name") != rule["command"]:
+                continue
             if not all(token in _arguments(span) for token in rule.get("argumentsContain", [])):
                 continue
-            if "outcome" in rule and _field(span, "outcome") != rule["outcome"]:
+            if "outcome" in rule and _text(span, "outcome") != rule["outcome"]:
                 continue
-            # Exported as an OTLP intValue, which some exporters stringify; compare the number.
-            if "exitCode" in rule and str(_field(span, "shell.command.exit_code")) != str(rule["exitCode"]):
+            if "exitCode" in rule and _exit_code(span) != rule["exitCode"]:
                 continue
             matched = True
             break
         if not matched:
             problems.append(f"no {rule['command']} command matched")
-    return (not problems), "; ".join(problems) or f"{len(lines)} commands matched"
+    return (not problems), "; ".join(problems) or f"{len(scripts)} scripts matched"
 
 
 def _output(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    outputs = [_captured(span, "shell.command.output") for span in _commands(message, rule.get("command"))]
+    outputs = [output for _, output in _scripts(message, outputs=True)]
     problems = []
     for needle, (least, most) in rule["count"].items():
         seen = sum(output.count(needle) for output in outputs)
@@ -209,14 +239,13 @@ def _fact(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _read_order(message: evidence.Message, rule: dict[str, Any]) -> tuple[bool, str]:
-    """For each [script needle, output needle]: once an output shows the needle, a command whose
-    line holds the script needle ran at or before it."""
-    lines = [_line(span).lower() for span in message.shell]
-    outputs = [_captured(span, "shell.command.output") for span in message.shell]
+    """For each [script needle, output needle]: once a script's output shows the needle, a script
+    holding the script needle ran at or before it (S4's read_before)."""
+    scripts = _scripts(message, outputs=True)
     problems = []
     for script_needle, output_needle in rule["pairs"]:
-        read = next((i for i, line in enumerate(lines) if script_needle.lower() in line), None)
-        wrote = next((i for i, output in enumerate(outputs) if output_needle in output), None)
+        read = next((i for i, (text, _) in enumerate(scripts) if script_needle.lower() in text.lower()), None)
+        wrote = next((i for i, (_, output) in enumerate(scripts) if output_needle in output), None)
         if wrote is not None and (read is None or read > wrote):
             problems.append(f"order:{script_needle}<{output_needle}")
     return (not problems), "; ".join(problems) or "reads ran before their outputs"

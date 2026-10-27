@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -43,26 +44,32 @@ class GradeTest(unittest.TestCase):
 
     def test_an_output_before_its_read_fails_read_order(self):
         spans = synthetic.message_one() + synthetic.message_two()
-        echo = synthetic.span(
-            "a1" * 16, "1000000000000006", "1000000000000002", "shell.command",
-            synthetic.BASE + 250, synthetic.BASE + 260,
-            attrs={"shell.command.name": "echo", **synthetic.captured("shell.command.arguments", '["trunk-synthetic"]'),
-                   **synthetic.captured("shell.command.output", "trunk-synthetic"), "shell.command.exit_code": 0, "outcome": "succeeded"},
-        )
         rules = [rule for rule in self.rules if rule["rule"] == "readOrder"]
         self.assertEqual(grade.grade(self.export(spans), rules, COMPLETE)["status"], "passed")
-        graded = grade.grade(self.export(spans + [echo]), rules, COMPLETE)
-        self.assertEqual((graded["status"], graded["reasons"]), ("failed", ["rule 0 (readOrder): order:repo view<trunk-synthetic"]))
+        # An earlier script already printed the fact before any `repo view` ran.
+        spans[5]["events"][:0] = synthetic.script_events(synthetic.BASE + 230, "evalgw-call-early", "cat notes", synthetic.FACT)
+        graded = grade.grade(self.export(spans), rules, COMPLETE)
+        self.assertEqual((graded["status"], graded["reasons"]), ("failed", [f"rule 0 (readOrder): order:repo view<{synthetic.FACT}"]))
 
     def test_script_needles_and_output_counts_follow_the_s4_judge(self):
         rules = [
             {"rule": "script", "message": 1, "noneOf": ["REPO VIEW"]},
             {"rule": "script", "message": 1, "countMax": {"view": 0}},
-            {"rule": "output", "message": 1, "count": {"trunk-synthetic": [2, 3]}},
-            {"rule": "fact", "message": 1, "anyOf": [["main", "TRUNK-SYNTHETIC"]]},
+            {"rule": "output", "message": 1, "count": {synthetic.FACT: [2, 3]}},
+            {"rule": "fact", "message": 1, "anyOf": [["main", synthetic.FACT.upper()]]},
         ]
         graded = grade.grade(self.export(), rules, COMPLETE)
         self.assertEqual([item["result"] for item in graded["rules"]], ["fail", "fail", "fail", "pass"])
+
+    def test_a_provider_command_with_empty_span_output_still_grades_its_script_output(self):
+        """Stock 0.62.0 leaves shell.command.output empty for a provider command whose stdout reached
+        the script; the read is graded from agent.tool.output, not failed."""
+        spans = synthetic.message_one() + synthetic.message_two()
+        shell = synthetic.otlp.attributes(spans[3]["attributes"])
+        self.assertEqual((shell["shell.command.output"], shell["shell.command.output.bytes"]), ("", 0))
+        self.assertGreater(shell["shell.command.stdout.bytes"], 0)
+        graded = grade.grade(self.export(spans), [r for r in self.rules if r["rule"] in ("output", "readOrder")], COMPLETE)
+        self.assertEqual((graded["status"], graded["score"]), ("passed", 1.0))
 
     def test_an_incomplete_bundle_is_unscored(self):
         incomplete = {"status": "incomplete", "reasons": [{"code": "gateway_sessions_abandoned", "detail": "x"}]}
@@ -70,25 +77,48 @@ class GradeTest(unittest.TestCase):
         self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
         self.assertIn("gateway_sessions_abandoned", graded["reasons"])
 
-    def test_absent_shell_output_is_a_gap_not_a_failure(self):
+    def test_a_script_without_its_output_is_a_gap_not_a_failure(self):
         spans = synthetic.message_one() + synthetic.message_two()
-        spans[3]["attributes"] = [item for item in spans[3]["attributes"] if item["key"] != "shell.command.output"]
+        spans[5]["events"] = [item for item in spans[5]["events"] if item["name"] != "agent.tool.output"]
         graded = grade.grade(self.export(spans), self.rules, COMPLETE)
         self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
         self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["output", "readOrder"])
 
-    def test_truncated_output_is_a_gap_not_a_score(self):
-        """dekopon cuts shell output at 4096 bytes and records the full length beside it."""
-        full = "x" * 4500 + "trunk-synthetic"
+    def test_truncated_arguments_are_a_gap_not_a_score(self):
+        """dekopon cuts shell attributes at 4096 bytes and records the full length beside them."""
+        full = json.dumps(["repo", "view", "synthetic-org/fixture-repo", "x" * 4500])
         spans = synthetic.message_one() + synthetic.message_two()
-        spans[3]["attributes"] = [item for item in spans[3]["attributes"] if not item["key"].startswith("shell.command.output")]
+        spans[3]["attributes"] = [item for item in spans[3]["attributes"] if not item["key"].startswith("shell.command.arguments")]
         spans[3]["attributes"] += synthetic.attributes(
-            {"shell.command.output": full[:4096] + "…[truncated]", "shell.command.output.bytes": len(full)}
+            {"shell.command.arguments": full[:4096] + "…[truncated]", "shell.command.arguments.bytes": len(full)}
         )
         graded = grade.grade(self.export(spans), self.rules, COMPLETE)
         self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
-        self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["output", "readOrder"])
-        self.assertIn("of 4515 bytes", graded["reasons"][0])
+        self.assertEqual([item["rule"] for item in graded["rules"] if item["result"] == "gap"], ["script"])
+        self.assertIn(f"of {len(full)} bytes", graded["reasons"][0])
+
+    def test_untyped_command_fields_are_gaps_not_failures(self):
+        script = [rule for rule in self.rules if rule["rule"] == "script"]
+        for key, value in (("shell.command.name", {"kvlistValue": {"values": []}}),
+                           ("outcome", {"intValue": "1"}),
+                           ("shell.command.exit_code", {"stringValue": "0"})):
+            spans = synthetic.message_one() + synthetic.message_two()
+            spans[3]["attributes"] = [item for item in spans[3]["attributes"] if item["key"] != key]
+            spans[3]["attributes"].append({"key": key, "value": value})
+            graded = grade.grade(self.export(spans), script, COMPLETE)
+            self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None), key)
+        spans = synthetic.message_one() + synthetic.message_two()
+        spans[3]["attributes"] = [item for item in spans[3]["attributes"] if not item["key"].startswith("shell.command.arguments")]
+        spans[3]["attributes"] += synthetic.attributes(synthetic.captured("shell.command.arguments", '["repo", 7]'))
+        self.assertEqual(grade.grade(self.export(spans), script, COMPLETE)["status"], "infrastructure_error")
+
+    def test_text_that_is_not_utf8_is_a_gap(self):
+        spans = synthetic.message_one() + synthetic.message_two()
+        spans[5]["events"][1]["attributes"] = synthetic.attributes(
+            {"audit.event": "agent.tool.output", "gen_ai.tool.call.id": "evalgw-call-0", "output": "\ud800" + synthetic.FACT}
+        )
+        graded = grade.grade(self.export(spans), [r for r in self.rules if r["rule"] == "output"], COMPLETE)
+        self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
 
     def test_an_unsupported_predicate_never_grades(self):
         graded = grade.grade(self.export(), [{"rule": "fact", "message": 1, "all_of": ["NOT IN ANSWER"]}], COMPLETE)
@@ -106,7 +136,7 @@ class GradeTest(unittest.TestCase):
         self.assertEqual(grade.grade(self.export(spans), rules, COMPLETE)["status"], "failed")
 
     def test_a_log_copy_of_a_span_event_is_counted_once(self):
-        copy = synthetic.answer(synthetic.BASE + 10_200, 1, "I reported trunk-synthetic as the default branch.", [])
+        copy = synthetic.answer(synthetic.BASE + 10_200, 1, f"I reported the description {synthetic.DESCRIPTION}.", [])
         record = {
             "timeUnixNano": copy["timeUnixNano"],
             "severityText": "INFO",
@@ -128,7 +158,7 @@ class SocketReplyIsNotEvidenceTest(unittest.TestCase):
             root = synthetic.write_bundle(Path(directory) / "attempt")
             driver = synthetic.driver()
             for message in driver["messages"]:
-                message["reply"] = {"reply": "trunk-synthetic" if message["ordinal"] == 2 else "nothing"}
+                message["reply"] = {"reply": synthetic.FACT if message["ordinal"] == 2 else "nothing"}
             spans = synthetic.message_one() + synthetic.message_two()
             spans[-1]["events"][1] = synthetic.answer(synthetic.BASE + 10_199, 1, "I do not remember.", [])
             synthetic.write_lines(root / "trace" / "traces.jsonl", [synthetic.resource_spans("dekopon-gatewayd", spans)])
