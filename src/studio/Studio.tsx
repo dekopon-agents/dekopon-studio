@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ChatRecord, ModelCall, ReplayObservation, SummaryCall } from '../record';
 import { FactView, GapView, JsonView, location } from './Facts';
-import { budget, difference, key, steps } from './model';
+import { budget, difference, eventTitles, key, steps } from './model';
 
 function CallView({ call, record }: { call: ModelCall; record: ChatRecord }) {
   const all = [...record.messages.flatMap(m => m.calls), ...record.unanchoredCalls];
@@ -63,9 +63,9 @@ function SummaryView({ summary }: { summary: SummaryCall }) {
 function ReplayView({ replay }: { replay: ReplayObservation }) {
   return <section><h3>History replay into this turn</h3>
     <p>These are recorded session totals, not a simulated replay.</p>
-    <dl><dt>Prior exchanges</dt><dd>{<FactView fact={replay.priorTurns} />}</dd>
-      <dt>Prior bytes</dt><dd>{<FactView fact={replay.priorBytes} />}</dd>
-      <dt>Configuration generation digest</dt><dd>{<FactView fact={replay.generation} />}</dd></dl>
+    <dl><dt>Prior exchanges</dt><dd><FactView fact={replay.priorTurns} /></dd>
+      <dt>Prior bytes</dt><dd><FactView fact={replay.priorBytes} /></dd>
+      <dt>Configuration generation digest</dt><dd><FactView fact={replay.generation} /></dd></dl>
     <p>Select this turn’s call to inspect the replayed messages actually sent. Memory generation and record selection appear on projection/publication steps.</p>
   </section>;
 }
@@ -139,7 +139,7 @@ export default function Studio({ record }: { record: ChatRecord }) {
           <button disabled={!selected || cursor === observations.length - 1} onClick={() => setCursor(c => c + 1)}>Next step</button></div>
         {selected && <div key={selected.id} className="observation"><p className="identifier">{selected.traceId} · {selected.time} ns</p>
           {selected.call && <CallView call={selected.call} record={record} />}
-          {selected.event && <><h3>Recorded event</h3><JsonView value={selected.event} /></>}
+          {selected.event && <><h3>Recorded event</h3><p>{eventTitles[selected.event.name]?.explanation}</p><JsonView value={selected.event} /></>}
           {selected.summary && <SummaryView summary={selected.summary} />}
           {selected.replay && <ReplayView replay={selected.replay} />}
         </div>}

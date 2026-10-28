@@ -144,6 +144,8 @@ export class Fixture {
 export function studioFixture(): Fixture {
   const f = new Fixture(); f.version = '0.70.0';
   f.spans[1].attributes = attributes({ 'prompt.max_steps': 4, 'prompt.max_capability_calls': 2 });
+  f.spans[1].events.push(event('gateway.progress', 11, { kind: 'started', max_steps: 4 }));
+  f.spans[2].events.push(event('gateway.progress', 23, { kind: 'answered', turn: 1, tool_calls: 1 }));
   f.spans[2].events.push(event('accounting.model.turn', 23, { 'model.turn': 1, outcome: 'succeeded' }));
   f.spans[3].events = [f.spans[3].events[0],
     event('accounting.model.turn', 62, { 'model.turn': 2, outcome: 'steered' }),
@@ -164,7 +166,8 @@ export function studioFixture(): Fixture {
     'conversation.turns': 0, 'conversation.bytes': 0, 'generation.digest': 'synthetic-generation',
   }));
   f.spans.push(span(traceB, '2000000000000009', '2000000000000001', 'gateway.session', 1005, [
-    event('gateway_memory_projection', 1006, { 'memory.generation': 1, 'memory.record.ids': ['1'],
+    event('gateway_recalled', 1006, { source: 'journal', messages: 1, delta: 0 }),
+    event('gateway_memory_projection', 1007, { 'memory.generation': 1, 'memory.record.ids': ['1'],
       'memory.rung.summary': 1, 'memory.bytes': 17 }),
   ], { 'conversation.turns': 1, 'conversation.bytes': 90, 'generation.digest': 'synthetic-generation' }));
   f.spans.find(s => s.spanId === '2000000000000002')!.attributes = attributes({ 'prompt.max_steps': 4 });

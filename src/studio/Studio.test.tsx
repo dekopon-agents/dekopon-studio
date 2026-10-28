@@ -27,9 +27,13 @@ test('stepping back after forward restores the same call input', async () => {
   await openedStudio();
   const input = screen.getByLabelText('Call input').textContent;
   fireEvent.click(screen.getByRole('button', { name: 'Context view' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
-  expect(screen.queryByLabelText('Call input')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Previous step' }));
+  let advanced = 0;
+  do {
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+    advanced++;
+  } while (!screen.queryByLabelText('Call input') && advanced < 20);
+  expect(screen.getByLabelText('Call input').textContent).not.toBe(input);
+  for (let i = 0; i < advanced; i++) fireEvent.click(screen.getByRole('button', { name: 'Previous step' }));
   expect(screen.getByLabelText('Call input').textContent).toBe(input);
 });
 test('a steered call is aborted and not counted toward the step cap', async () => {
@@ -56,7 +60,7 @@ test('an attachment source appears nowhere in the DOM', async () => {
 test('mailbox inventories and RUNNING/COMPLETING intervals stay unknown beside recorded depths', async () => {
   await openedStudio();
   fireEvent.click(screen.getByRole('button', { name: 'Context view' }));
-  fireEvent.click(screen.getByRole('button', { name: 'gateway.admission · queued' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Recorded admission · queued' }));
   expect(screen.getByRole('heading', { name: 'Steer queue inventory: unknown' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Follow-up queue inventory: unknown' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'RUNNING interval: unknown' })).toBeTruthy();
