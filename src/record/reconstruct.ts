@@ -46,11 +46,20 @@ function publicEvent(e: Event): EvidenceRecord {
 function eventIdentity(e: Event) {
   return canonical([e.key.traceId, e.key.spanId, e.name, Object.fromEntries(Object.entries(e.attributes).filter(([key]) => !incidental(key)))]);
 }
-function unique(events: Event[]): Event[] {
-  const seen = new Set<string>();
-  return [...events].sort((a, b) => Number(a.origin !== 'span') - Number(b.origin !== 'span') || compare(a.time, b.time))
-    .filter(e => { const key = eventIdentity(e); if (seen.has(key)) return false; seen.add(key); return true; })
-    .sort((a, b) => compare(a.time, b.time));
+function withoutLogCopies(events: Event[]): Event[] {
+  const copies = new Map<string, number>();
+  for (const e of events) if (e.origin === 'span') {
+    const key = eventIdentity(e);
+    copies.set(key, (copies.get(key) ?? 0) + 1);
+  }
+  return [...events].sort((a, b) => compare(a.time, b.time)).filter(e => {
+    if (e.origin === 'span') return true;
+    const key = eventIdentity(e), remaining = copies.get(key) ?? 0;
+    // Each span occurrence suppresses one log copy, never another span or unmatched log.
+    if (!remaining) return true;
+    copies.set(key, remaining - 1);
+    return false;
+  });
 }
 function embedded(v: Value | undefined, c: Context, at: Location): Value {
   return parse(text(v, c, at, 'known-event-shape'), c, at);
@@ -143,7 +152,7 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
     }
     return false;
   }
-  const events = unique(exported.events), recognized: Event[] = [];
+  const events = withoutLogCopies(exported.events), recognized: Event[] = [];
   const finals = new Map<string, Event>();
   for (const e of events) {
     if (!names.has(e.name)) { c.note('unknown-event', e.at, e.name); continue; }

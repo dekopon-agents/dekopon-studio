@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { expect, test, vi } from 'vitest';
 import { readTrialBundle } from './index';
+import { steps } from '../studio/model';
 import type { Fact, ReadResult } from './types';
 import { attributes, definitions, event, Fixture, journalText, prompt, span, studioFixture, traceA, traceB, traceSummary } from './fixtures';
 
@@ -206,6 +207,38 @@ test('a log copy of a span event is deduplicated by structured identity with the
     attributes: [...e.attributes, ...attributes({ level: 'INFO', 'code.filepath': 'synthetic' })] }] }] }] };
   const r = record(await readTrialBundle(await f.files()));
   expect(r.journals[0].publications).toHaveLength(1); expect(r.journals[0].publications[0].origin).toBe('span');
+});
+test('two repeated steer observations survive in the reader and timeline while their log copies are suppressed', async () => {
+  const f = new Fixture(), session = f.spans[1];
+  const steers = [40, 50].map(time => event('gateway.progress', time, { kind: 'steered', turn: 2 }));
+  session.events.push(...steers);
+  f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: steers.map(e => ({
+    traceId: traceA, spanId: session.spanId, timeUnixNano: e.timeUnixNano,
+    body: { stringValue: e.name }, attributes: [...e.attributes, ...attributes({ level: 'INFO' })],
+  })) }] }] };
+  const r = record(await readTrialBundle(await f.files()));
+  const retained = r.evidence.filter(e => e.name === 'gateway.progress' && e.attributes.kind === 'steered');
+  expect(retained.map(e => ({ time: e.time, origin: e.origin, turn: e.attributes.turn }))).toEqual([
+    { time: steers[0].timeUnixNano, origin: 'span', turn: '2' },
+    { time: steers[1].timeUnixNano, origin: 'span', turn: '2' },
+  ]);
+  const timeline = steps(r).filter(step => step.event?.name === 'gateway.progress' && step.event.attributes.kind === 'steered');
+  expect(timeline.map(step => step.time)).toEqual(steers.map(e => e.timeUnixNano));
+  expect(new Set(timeline.map(step => step.id)).size).toBe(2);
+});
+test.each([0, 1])('repeated log observations remain when only %s span copies can be matched', async spanCopies => {
+  const f = new Fixture(), session = f.spans[1];
+  const steers = [40, 50].map(time => event('gateway.progress', time, { kind: 'steered', turn: 2 }));
+  session.events.push(...steers.slice(0, spanCopies));
+  f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: steers.map(e => ({
+    traceId: traceA, spanId: session.spanId, timeUnixNano: e.timeUnixNano,
+    body: { stringValue: e.name }, attributes: e.attributes,
+  })) }] }] };
+  const r = record(await readTrialBundle(await f.files()));
+  const retained = r.evidence.filter(e => e.name === 'gateway.progress' && e.attributes.kind === 'steered');
+  expect(retained.map(e => ({ time: e.time, origin: e.origin }))).toEqual(steers.map((e, i) => ({
+    time: e.timeUnixNano, origin: i < spanCopies ? 'span' : 'log',
+  })));
 });
 test('malformed known event shapes are errors and incorrect reference digests are refused', async () => {
   const f = new Fixture(); f.spans[2].events[0].attributes = attributes({ messages: true });
