@@ -269,3 +269,53 @@ test('finite OTLP doubles stay valid while fractional or floating point timestam
   f.traceOverride = '{"resourceSpans":[{"scopeSpans":[{"spans":[{"startTimeUnixNano":1.0}]}]}]}';
   expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'otlp-scalar' }] });
 });
+
+test('large valid exports assemble every span and event without a function-argument limit', async () => {
+  const f = new Fixture(), extraCount = 130_000;
+  f.spans = f.spans.concat(Array.from({ length: extraCount }, (_, i) =>
+    span(traceA, (i + 1000).toString(16).padStart(16, '0'), '', 'future.span', i + 2000,
+      [event('future.event', i + 2000, {})])));
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.notes.filter(n => n.kind === 'unknown-span' && n.name === 'future.span')).toHaveLength(extraCount);
+  expect(r.notes.filter(n => n.kind === 'unknown-event' && n.name === 'future.event')).toHaveLength(extraCount);
+}, 60_000);
+test.each([1, null, 'future payload', [], { nested: true }].map(payload => [payload]))(
+  'unknown journal index variants skip their payload and keep a note: %j', async payload => {
+    const f = new Fixture();
+    f.journal = f.journal!.replace(/"field":\{"User":\{"original_bytes":\d+\}\}/,
+      '"field":' + JSON.stringify({ Future: payload }));
+    const r = record(await readTrialBundle(await f.files()));
+    expect(r.notes).toContainEqual(expect.objectContaining({ kind: 'unknown-variant', name: 'Future' }));
+    expect(r.journals[0].spans).toEqual([]);
+  });
+test.each([
+  'Generated',
+  'Error',
+  { Error: { kind: 'Io', detail: 'failure' } },
+])('known summary variants require their declared payloads: %j', async malformed => {
+  const f = new Fixture();
+  f.journal = f.journal!.replace('"summaries":["Queued"]', '"summaries":' + JSON.stringify([malformed]));
+  expect(await readTrialBundle(await f.files())).toMatchObject({
+    ok: false, errors: [{ kind: 'journal-shape', at: { path: 'journal/agent/stem.jsonl' } }],
+  });
+});
+test('journal headers must declare the immediate successor id', async () => {
+  const f = new Fixture(); f.journal = journalText().replace('"nextRecordId":2', '"nextRecordId":3');
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'journal-shape' }] });
+});
+test('journal records must follow the preceding header successor id', async () => {
+  const f = new Fixture(); f.journal = journalText(1) + journalText(3);
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'journal-reference' }] });
+});
+test.each(['s', 'p', 'c'])('a known %s side line cannot interrupt a journal body and its header', async tag => {
+  const f = new Fixture(), next = journalText(2).split('\n');
+  const side = journalText().split('\n').find(line => line.startsWith('{"' + tag + '":'))!;
+  f.journal = journalText() + [next[0], side, ...next.slice(1)].join('\n');
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'journal-reference' }] });
+});
+test('a retained journal may start at any id and end with one unfinished body', async () => {
+  const f = new Fixture(); f.journal = journalText(7) + journalText(8) + '{"b":[]}\n';
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.journals.map(j => j.key.recordId)).toEqual(['7', '8']);
+  expect(r.gaps).toContainEqual({ kind: 'journal-tail', at: { path: 'journal/agent/stem.jsonl' } });
+});

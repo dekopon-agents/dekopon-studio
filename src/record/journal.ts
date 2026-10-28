@@ -18,6 +18,7 @@ function model(v: Value | undefined, c: Context, at: Location): ModelIdentity {
 }
 function slot(v: Value, c: Context, at: Location): Slot {
   if (v === 'Queued' || v === 'Running') return { state: v === 'Queued' ? 'queued' : 'running' };
+  if (v === 'Generated' || v === 'Error') c.fail(shape, at);
   if (typeof v === 'string') { c.note('unknown-variant', at, v); return { state: 'unknown', variant: v }; }
   const s = o(v, c, at), keys = Object.keys(s);
   if (keys.length !== 1) c.fail(shape, at);
@@ -25,8 +26,10 @@ function slot(v: Value, c: Context, at: Location): Slot {
   if (keys[0] === 'Error') {
     const error = o(s.Error, c, at); unknownFields(error, ['kind', 'detail'], c, at);
     let failure: string, ioKind: string | undefined;
-    if (typeof error.kind === 'string') failure = error.kind;
-    else {
+    if (typeof error.kind === 'string') {
+      if (error.kind === 'Io') c.fail(shape, at);
+      failure = error.kind;
+    } else {
       const kind = o(error.kind, c, at);
       if (Object.keys(kind).length !== 1) c.fail(shape, at);
       failure = Object.keys(kind)[0];
@@ -136,7 +139,7 @@ function header(v: Value, body: Body, path: string, at: Location, c: Context): J
   unknownFields(h, ['id', 'nextRecordId', 'turn', 'atMs', 'grant', 'model', 'summaries', 'plan', 'assets',
     'nextAssetId', 'bodyLen', 'spans', 'arrived', 'pin', 'choice'], c, at);
   const recordId = u(h.id, c, at, 1n), nextRecordId = u(h.nextRecordId, c, at, 1n);
-  if (BigInt(nextRecordId) <= BigInt(recordId)) c.fail(shape, at);
+  if (BigInt(nextRecordId) !== BigInt(recordId) + 1n) c.fail(shape, at);
   if (BigInt(u(h.bodyLen, c, at)) !== BigInt(body.bytes.length)) c.fail('journal-index', at);
   const spans: JournalSpan[] = [];
   for (const v of a(h.spans, c, at)) {
@@ -153,11 +156,12 @@ function header(v: Value, body: Body, path: string, at: Location, c: Context): J
     else {
       const f = o(s.field, c, at);
       if (Object.keys(f).length !== 1) c.fail(shape, at);
-      fieldName = Object.keys(f)[0]; meta = o(f[fieldName], c, at);
+      fieldName = Object.keys(f)[0];
     }
     if (!['User', 'Steer', 'Assistant', 'Plain', 'Opaque', 'CallId', 'RejectedTool', 'Arguments', 'Result'].includes(fieldName)) {
       c.note('unknown-variant', at, fieldName); continue;
     }
+    if (typeof s.field !== 'string') meta = o((s.field as ObjectValue)[fieldName], c, at);
     const expectedKind = fieldName === 'Opaque' ? 'raw' : 'escaped';
     if (s.kind !== expectedKind) c.fail('journal-index', at);
     unknownFields(meta, ['original_bytes', 'model', 'tool', 'outcome'], c, at);
@@ -206,6 +210,7 @@ function header(v: Value, body: Body, path: string, at: Location, c: Context): J
 export function journal(bytes: Uint8Array, path: string, c: Context): JournalRecord[] {
   const records: JournalRecord[] = [], byId = new Map<string, JournalRecord>();
   let body: Body | undefined;
+  let expectedRecordId: string | undefined;
   for (const line of lines(bytes)) {
     const at = { path, line: line.line };
     if (!line.terminated) { c.gap('journal-tail', at); break; }
@@ -226,9 +231,11 @@ export function journal(bytes: Uint8Array, path: string, c: Context): JournalRec
     } else if (tag === 'h') {
       if (!body) c.fail('journal-reference', at);
       const record = header(envelope.h, body, path, at, c);
-      if (byId.has(record.key.recordId)) c.fail('journal-reference', at);
+      if (expectedRecordId !== undefined && record.key.recordId !== expectedRecordId) c.fail('journal-reference', at);
+      expectedRecordId = record.nextRecordId;
       byId.set(record.key.recordId, record); records.push(record); body = undefined;
     } else if (['s', 'p', 'c'].includes(tag)) {
+      if (body) c.fail('journal-reference', at);
       const side = o(envelope[tag], c, at);
       unknownFields(side, tag === 's' ? ['atMs', 'record', 'part', 'slot', 'subject']
         : tag === 'p' ? ['atMs', 'record', 'pin', 'subject'] : ['atMs', 'record', 'choice'], c, at);

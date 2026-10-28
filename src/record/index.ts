@@ -15,13 +15,16 @@ export async function readTrialBundle(files: ReadonlyMap<string, Uint8Array>): P
     const exported = { spans: [], events: [] } as ReturnType<typeof otlp>;
     for (const [path, logs] of [[b.trace, false], [b.logs, true]] as const) if (path) {
       const parsed = otlp(snapshot.get(path)!, path, logs, c);
-      exported.spans.push(...parsed.spans); exported.events.push(...parsed.events);
+      for (const span of parsed.spans) exported.spans.push(span);
+      for (const event of parsed.events) exported.events.push(event);
     }
     const version = b.record.dekoponVersion.state === 'known' ? b.record.dekoponVersion.value : null;
     const match = version?.match(/^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:[-+].*)?$/);
     const v3 = match && (BigInt(match[1]) > 0n || BigInt(match[2]) >= 65n);
     if (!v3) c.gaps.push({ kind: 'journal-format', at: { path: 'manifest.json', field: 'journal' }, version });
-    else for (const path of b.journals) b.record.journals.push(...journal(snapshot.get(path)!, path, c));
+    else for (const path of b.journals) {
+      for (const record of journal(snapshot.get(path)!, path, c)) b.record.journals.push(record);
+    }
     reconstruct(b.record, exported, c);
     return { ok: true, record: b.record };
   } catch (error) {
