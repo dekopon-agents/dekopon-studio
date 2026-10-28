@@ -9,7 +9,8 @@ type GapKind =
   | 'summary-missing' | 'summary-truncated' | 'publication-missing' | 'record-missing'
   | 'ambiguous-record-join' | 'selection-reason' | 'unknown-setting'
   | 'opaque-content' | 'image-bytes' | 'evicted-record' | 'append-failure'
-  | 'decider-probability';
+  | 'decider-probability' | 'call-outcome' | 'step-cap' | 'mailbox-inventory-unavailable'
+  | 'mailbox-state-unavailable';
 export type Gap =
   | { kind: GapKind; at: Location; attribute?: string; traceId?: string; spanId?: string;
       recordId?: string; part?: string; detail?: string }
@@ -31,9 +32,26 @@ export interface EvidenceRecord {
   key: SpanKey; at: Location; name: string; time: string; origin: 'span' | 'log';
   attributes: { [key: string]: Json };
 }
+export interface RecordSpan {
+  key: SpanKey; at: Location; parent: string; name: string; start: string; end: string;
+  attributes: Record<string, Json>;
+}
+export interface Admission {
+  evidence: EvidenceRecord; outcome: Fact<string>; conversation: Fact<string>; combinedDepth: Fact<string>;
+}
+export interface ReplayObservation {
+  key: SpanKey; time: string; priorTurns: Fact<string>; priorBytes: Fact<string>; generation: Fact<string>;
+}
+export type CallOutcome = 'succeeded' | 'steered' | 'interrupted' | 'refused' | 'failed';
+export interface MailboxGaps {
+  steers: Fact<Json[]>; followUps: Fact<Json[]>;
+  runningInterval: Fact<{ start: string; end: string }>;
+  completingInterval: Fact<{ start: string; end: string }>;
+}
 export interface ToolSet { key: SpanKey; definitions: Json[]; definitionsJson: string }
 export interface ModelCall {
   key: SpanKey; session: Fact<SpanKey>; turn: Fact<string>;
+  startedAt: string; endedAt: string; outcome: Fact<CallOutcome>; stepCap: Fact<string>;
   input: Fact<{ provenance: 'reconstructed'; messages: Json[]; messagesJson: string; prompts: Location[] }>;
   tools: Fact<SpanKey>; answer: Fact<EvidenceRecord>; settings: Record<string, Fact<Json>>;
   completionSpans: SpanKey[];
@@ -90,11 +108,11 @@ export interface SummaryCall {
   settings: Record<string, Fact<Json>>; completionSpans: SpanKey[];
 }
 export interface ChatRecord {
-  readerVersion: 1; bundleVersion: 1; dekoponVersion: Fact<string>;
+  readerVersion: 2; bundleVersion: 1; dekoponVersion: Fact<string>;
   references: FileReference[]; identity: { [key: string]: Json };
   freeze: Fact<Json>; completeness: Fact<Json>;
   messages: ChatMessage[]; unanchoredCalls: ModelCall[]; toolSets: ToolSet[]; journals: JournalRecord[];
-  summaryCalls: SummaryCall[]; evidence: EvidenceRecord[];
+  summaryCalls: SummaryCall[]; evidence: EvidenceRecord[]; spans: RecordSpan[]; admissions: Admission[]; replays: ReplayObservation[]; mailbox: MailboxGaps;
   gaps: Gap[]; notes: Note[];
 }
 export type ReadResult = { ok: true; record: ChatRecord }

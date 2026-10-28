@@ -1,7 +1,7 @@
 import { array, canonical, Context, decimal, field, json, known, object, parse, text, wellFormed } from './json';
 import type { ObjectValue, Value } from './json';
 import type { Event, Export, Span } from './otlp';
-import type { ChatMessage, ChatRecord, EvidenceRecord, Fact, Json, Location, ModelCall, SpanKey, ToolExchange } from './types';
+import type { CallOutcome, ChatMessage, ChatRecord, EvidenceRecord, Fact, Json, Location, ModelCall, SpanKey, ToolExchange } from './types';
 
 const settings = ['model.name', 'model', 'model.backend', 'model.dialect', 'model.stream', 'cache.style',
   'generation.max_output_tokens', 'generation.temperature', 'generation.top_p', 'reasoning.effort',
@@ -13,7 +13,8 @@ const names = new Set(['agent.model.prompt', 'agent.model.answer', 'agent.tool.s
   'gateway_memory_summary_transition', 'gateway_memory_summary_dropped', 'gateway_memory_pin_dropped',
   'gateway_memory_policy', 'gateway_memory_notice', 'gateway_journal_expired', 'gateway_journal_append_failed',
   'gateway_memory_record_failed', 'gateway_memory_retention_failed', 'accounting.model.turn',
-  'gateway.message.received', 'reply.delivered', 'broker.execution']);
+  'gateway.message.received', 'reply.delivered', 'broker.execution', 'gateway.admission',
+  'gateway.progress', 'gateway_recalled', 'gateway_recall_failed']);
 const attributes = new Set([...settings, 'audit.event', 'event', 'model.turn', 'message.count', 'transcript.scope',
   'transcript.segment', 'transcript.segments', 'messages', 'gen_ai.tool.definitions', 'answer', 'tool_calls',
   'stream.interrupted', 'gen_ai.tool.call.id', 'script', 'output', 'memory.record.id', 'memory.generation',
@@ -30,7 +31,10 @@ const attributes = new Set([...settings, 'audit.event', 'event', 'model.turn', '
   'prompt.max_steps', 'prompt.max_capability_calls', 'shell.command.name', 'shell.command.arguments',
   'shell.command.arguments.bytes', 'shell.command.exit_code', 'shell.command.kind', 'shell.command.output',
   'shell.command.output.bytes', 'shell.command.stdout.bytes', 'usage.input_tokens', 'usage.output_tokens',
-  'usage.total_tokens', 'tool_calls.bytes', 'messages.bytes', 'answer.bytes', 'output.bytes', 'script.bytes']);
+  'usage.total_tokens', 'queue.depth', 'conversation.id', 'kind', 'turn', 'turns', 'of',
+  'max_steps', 'source', 'delta', 'class', 'by', 'duration_ms', 'note', 'note.eta_s',
+  'word', 'argument_count', 'calls_used', 'calls_max', 'index', 'media_type', 'bytes', 'count',
+  'elapsed_ms', 'first_delta_ms', 'stream.deltas', 'progress.dropped', 'progress.notes_dropped', 'tool_calls.bytes', 'messages.bytes', 'answer.bytes', 'output.bytes', 'script.bytes']);
 const incidental = (key: string) => ['level', 'target', 'name', 'message'].includes(key) ||
   ['code.', 'thread.', 'log.', 'busy_ns', 'idle_ns'].some(prefix => key.startsWith(prefix));
 const id = (key: SpanKey) => key.traceId + '/' + key.spanId;
@@ -81,15 +85,39 @@ function validate(e: Event, c: Context): boolean {
   for (const [key, v] of Object.entries(e.attributes)) {
     if (!attributes.has(key) && !incidental(key)) c.note('unknown-field', e.at, key);
     if (['model.turn', 'message.count', 'transcript.segment', 'transcript.segments', 'memory.record.id',
-      'memory.generation', 'memory.summary.part', 'memory.summary.bytes'].includes(key) && decimal(v) === undefined)
+      'memory.generation', 'memory.summary.part', 'memory.summary.bytes', 'queue.depth',
+      'turn', 'turns', 'of', 'max_steps', 'conversation.turns', 'conversation.bytes',
+      'prompt.max_steps', 'prompt.max_capability_calls', 'delta', 'note.eta_s', 'argument_count',
+      'calls_used', 'calls_max', 'index', 'bytes', 'count', 'elapsed_ms', 'first_delta_ms',
+      'stream.deltas', 'progress.dropped', 'progress.notes_dropped'].includes(key) && decimal(v) === undefined)
       c.fail('known-event-shape', field(e.at, key));
-    if (['messages', 'gen_ai.tool.definitions', 'answer', 'tool_calls', 'script', 'output',
+    if (['gen_ai.tool.definitions', 'answer', 'script', 'output',
       'gen_ai.tool.call.id', 'transcript.scope', 'memory.summary.text', 'memory.summary.from',
-      'memory.summary.to', 'memory.summary.failure', 'choice', 'reason'].includes(key) && typeof v !== 'string')
+      'memory.summary.to', 'memory.summary.failure', 'choice', 'reason', 'outcome',
+      'kind', 'conversation.id', 'source', 'class', 'by', 'generation.digest', 'note', 'word', 'media_type'].includes(key) && typeof v !== 'string')
       c.fail('known-event-shape', field(e.at, key));
+    if (key === 'messages' || key === 'tool_calls') {
+      const numeric = key === 'messages' && e.name === 'gateway_recalled' || key === 'tool_calls' && e.name === 'gateway.progress';
+      if (numeric ? decimal(v) === undefined : typeof v !== 'string') c.fail('known-event-shape', field(e.at, key));
+    }
     if (key === 'stream.interrupted' && typeof v !== 'boolean') c.fail('known-event-shape', field(e.at, key));
   }
   return final;
+}
+function evidenceFact(o: ObjectValue, attribute: string, at: Location, c: Context): Fact<string> {
+  const v = o[attribute];
+  if (v === undefined) return c.unknown('evidence-field', at, { attribute });
+  return known(typeof v === 'string' ? v : decimal(v)!);
+}
+function outcome(events: Event[], at: Location, c: Context): Fact<CallOutcome> {
+  const accounting = events.find(e => e.name === 'accounting.model.turn');
+  const value = accounting?.attributes.outcome;
+  if (value === 'succeeded' || value === 'steered' || value === 'interrupted' || value === 'refused' || value === 'failed')
+    return known(value);
+  if (value !== undefined && typeof value === 'string') c.note('unknown-variant', accounting!.at, value);
+  if (value === undefined && events.some(e => e.name === 'agent.model.answer' && e.attributes['stream.interrupted'] === true))
+    return known('interrupted');
+  return c.unknown('call-outcome', at);
 }
 function callSettings(completes: Span[], at: Location, c: Context): Record<string, Fact<Json>> {
   const o = completes[0]?.attributes ?? {};
@@ -121,9 +149,23 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
     if (!names.has(e.name)) { c.note('unknown-event', e.at, e.name); continue; }
     if (validate(e, c)) finals.set(e.key.traceId, e);
     recognized.push(e); record.evidence.push(publicEvent(e));
+    if (e.name === 'gateway.admission') record.admissions.push({ evidence: publicEvent(e),
+      outcome: evidenceFact(e.attributes, 'outcome', e.at, c),
+      conversation: evidenceFact(e.attributes, 'conversation.id', e.at, c),
+      combinedDepth: evidenceFact(e.attributes, 'queue.depth', e.at, c) });
   }
   for (const s of exported.spans) {
     if (!spans.has(s.name)) c.note('unknown-span', s.at, s.name);
+    else {
+      const contextAttributes = Object.fromEntries(Object.entries(s.attributes).filter(([name]) =>
+        ['conversation.turns', 'conversation.bytes', 'generation.digest', 'prompt.max_steps', 'prompt.max_capability_calls'].includes(name)));
+      validate({ key: s.key, at: s.at, name: s.name, time: s.start, origin: 'span', attributes: contextAttributes }, c);
+      record.spans.push({ ...s, attributes: publicEvent({ ...s, time: s.start, origin: 'span' }).attributes });
+      if (s.name === 'gateway.session') record.replays.push({ key: s.key, time: s.start,
+        priorTurns: evidenceFact(s.attributes, 'conversation.turns', s.at, c),
+        priorBytes: evidenceFact(s.attributes, 'conversation.bytes', s.at, c),
+        generation: evidenceFact(s.attributes, 'generation.digest', s.at, c) });
+    }
     for (const key of Object.keys(s.attributes)) if (!attributes.has(key) && !incidental(key)) c.note('unknown-field', s.at, key);
     if (s.name === 'shell.command') {
       for (const key of ['shell.command.arguments', 'shell.command.output']) bounded(s.attributes, key, c, s.at, true);
@@ -164,7 +206,11 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
     const answers = own.filter(e => e.name === 'agent.model.answer');
     const completes = exported.spans.filter(s => s.name === 'model.complete' && descends(s, span));
     const turn = decFact(prompts[0]?.attributes['model.turn'] ?? span.attributes['model.turn'], c, span.at, 'model-turn');
-    const call: ModelCall = { key: span.key, session, turn, input: c.unknown('missing-prompt', span.at, span.key),
+    const cap = sessionSpan?.name === 'prompt.session' ? sessionSpan.attributes['prompt.max_steps'] : undefined;
+    const stepCap = cap === undefined ? c.unknown<string>('step-cap', sessionSpan?.at ?? span.at)
+      : known(decimal(cap)!);
+    const call: ModelCall = { key: span.key, session, turn, startedAt: span.start, endedAt: span.end,
+      outcome: outcome(own, span.at, c), stepCap, input: c.unknown('missing-prompt', span.at, span.key),
       tools: c.unknown('tool-definitions', span.at, span.key),
       answer: answers.length ? known(publicEvent(answers[answers.length - 1])) : c.unknown('missing-answer', span.at, span.key),
       settings: callSettings(completes, span.at, c), completionSpans: completes.map(s => s.key) };

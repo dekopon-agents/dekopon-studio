@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "vite build",
-    "check:dist": "node scripts/check-dist.mjs"
+    "check:dist": "node scripts/check-dist.mjs",
+    "check:views": "node scripts/check-views.mjs"
   },
   "dependencies": {
     "react": "19.3.1",
