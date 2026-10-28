@@ -125,7 +125,7 @@ export class Fixture {
     const manifest = { bundleVersion: 1, kind: 'trial', dekopon: { version: this.version },
       attempt: { id: 'synthetic', startedAt: '2026-10-28T00:00:00Z', finishedAt: '2026-10-28T00:00:01Z' },
       scenario: { id: 'synthetic', config: config.scenario }, config, stdout,
-      freeze: { lastRepliedMessage: 2, conversation: 'synthetic', journalStems: ['agent/stem'],
+      freeze: { lastRepliedMessage: 2, conversation: { kind: 'directMessage', id: 'synthetic' }, journalStems: ['agent/stem'],
         gateway: { signal: 'SIGTERM', drained: true, exitCode: 0 }, copiedAt: '2026-10-28T00:00:01Z' },
       trace: { format: 'otlp-jsonl', ...await ref('trace/traces.jsonl') },
       logs: { format: 'otlp-jsonl', ...await ref('trace/logs.jsonl') },

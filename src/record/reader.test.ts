@@ -23,7 +23,7 @@ test('two messages use their earliest trace anchors and rebuild full then delta 
   expect(r.messages[0].startedAt).toBe('1800000000000000000');
   const calls = r.messages[0].calls;
   expect(calls).toHaveLength(2);
-  expect(value(calls[1].input)).toEqual({ provenance: 'reconstructed', messages: [
+  expect(value(calls[1].input)).toMatchObject({ provenance: 'reconstructed', messages: [
     { role: 'system', content: 'synthetic system' }, { role: 'user', content: 'first' },
     { role: 'assistant', content: null }, { role: 'tool', content: 'synthetic output' },
   ], prompts: expect.any(Array) });
@@ -42,7 +42,7 @@ test('journal publication and summary join by record id while each summary input
   const r = record(await readTrialBundle(await new Fixture().files())), j = r.journals[0], s = r.summaryCalls[0];
   expect(j.key).toEqual({ agent: 'agent', stem: 'stem', recordId: '1' });
   expect(j.publications.map(p => p.attributes['memory.record.id'])).toEqual(['1']);
-  expect(s.records).toEqual([j.key]); expect(value(s.part)).toBe('1'); expect(value(s.recordId)).toBe('1');
+  expect(s.recordCandidates).toEqual([j.key]); expect(value(s.part)).toBe('1'); expect(value(s.recordId)).toBe('1');
   expect(s.task).toEqual({ traceId: traceSummary, spanId: '3000000000000001' });
   expect(s.key).toEqual({ traceId: traceSummary, spanId: '3000000000000002' });
   expect(s.input).toEqual({ state: 'unknown', gap: {
@@ -56,7 +56,7 @@ test('journal publication and summary join by record id while each summary input
   expect(j.summaries).toEqual([{ state: 'generated', text: 'synthetic summary' }]);
   expect(j.changes[0].subject).toEqual({ kind: 'record' });
   expect(j.changes[1].subject).toEqual({ kind: 'asset', number: '7' });
-  expect(j.arrivals[0].summaries).toEqual([]); expect(j.pin).toBe('metadata'); expect(j.choice).toBe('summary-1');
+  expect(j.arrivals[0].summaries).toEqual([]); expect(value(j.pin)).toBe('metadata'); expect(value(j.choice)).toBe('summary-1');
   expect(j.representations.map(r => r.id)).toEqual(['native', 'summary-1', 'metadata']);
 });
 test('a summary task with no exported model child stays visible with its own span and gap', async () => {
@@ -90,7 +90,7 @@ test('unknown events, spans, attributes and journal fields are skipped with note
   f.spans[0].events.push(event('future.event', 1, { payload: 'UNKNOWN_PAYLOAD_CANARY' }));
   f.spans.push(span(traceA, '1000000000000099', '', 'future.span', 2));
   f.spans[0].attributes.push(...attributes({ future: 'UNKNOWN_PAYLOAD_CANARY' }));
-  f.journal = f.journal!.replace('"h":{', '"h":{"future":"UNKNOWN_PAYLOAD_CANARY",') + '{"future":{"payload":"UNKNOWN_PAYLOAD_CANARY"}}\n';
+  f.journal = f.journal!.replace('"h":{', '"futureEnvelope":"UNKNOWN_PAYLOAD_CANARY","h":{"future":"UNKNOWN_PAYLOAD_CANARY",') + '{"future":{"payload":"UNKNOWN_PAYLOAD_CANARY"}}\n';
   const r = record(await readTrialBundle(await f.files()));
   expect(r.notes).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'unknown-event', name: 'future.event' }),
@@ -165,7 +165,7 @@ test('missing prompt segments are a gap and cannot masquerade as a rebuilt input
 test('ambiguous record ids across journals retain candidates without assigning publication or summary to either', async () => {
   const f = new Fixture(); f.extraJournals.set('journal/other/stem.jsonl', journalText());
   const r = record(await readTrialBundle(await f.files()));
-  expect(r.summaryCalls[0].records).toEqual(r.journals.map(j => j.key));
+  expect(r.summaryCalls[0].recordCandidates).toEqual(r.journals.map(j => j.key));
   expect(r.journals.every(j => !j.publications.length && !j.summaryCalls.length)).toBe(true);
   expect(r.gaps).toContainEqual(expect.objectContaining({ kind: 'ambiguous-record-join', recordId: '1' }));
 });
@@ -213,4 +213,59 @@ test('malformed known event shapes are errors and incorrect reference digests ar
   const files = await new Fixture().files(), bytes = files.get('trace/traces.jsonl')!;
   bytes[0] = 32;
   expect(await readTrialBundle(files)).toMatchObject({ ok: false, errors: [{ kind: 'file-integrity' }] });
+});
+
+test('exact request JSON preserves large numeric literals while the decoded tool schema keeps safe numbers', async () => {
+  const f = new Fixture();
+  const raw = '[{"role":"user","content":"synthetic","n":9007199254740993}]';
+  const tools = '[{"type":"function","function":{"name":"fixture","parameters":{"maximum":3}}}]';
+  f.spans[2].events[0] = event('agent.model.prompt', 21, { 'model.turn': 1, 'transcript.scope': 'full',
+    'message.count': 1, messages: raw, 'gen_ai.tool.definitions': tools });
+  f.spans[3].events[0] = prompt(2, 'delta', 2, [{ role: 'tool', content: 'delta' }], 61);
+  const r = record(await readTrialBundle(await f.files())), calls = r.messages[0].calls;
+  expect(value(calls[0].input).messagesJson).toBe(raw);
+  expect(value(calls[1].input).messagesJson).toBe('[{"role":"user","content":"synthetic","n":9007199254740993},{"role":"tool","content":"delta"}]');
+  expect(r.toolSets[0].definitionsJson).toBe(tools);
+  expect(r.toolSets[0].definitions).toEqual([{ type: 'function', function: { name: 'fixture', parameters: { maximum: 3 } } }]);
+});
+test('interrupted answers and tool proposals are not reported as the delivered final answer', async () => {
+  const f = new Fixture();
+  f.spans[3].events.push(event('agent.model.answer', 90, { 'model.turn': 2, answer: 'partial', tool_calls: '[]', 'stream.interrupted': true }));
+  const r = record(await readTrialBundle(await f.files()));
+  expect(value(r.messages[0].finalAnswer).attributes.answer).toBe('first answer');
+});
+test('unknown rungs remain explicitly unknown rather than becoming an absent pin', async () => {
+  const f = new Fixture(); f.journal = f.journal!.replace('"pin":"metadata"', '"pin":"future-rung"');
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.journals[0].pin).toMatchObject({ state: 'unknown', gap: { kind: 'evidence-field', attribute: 'rung' } });
+});
+test('a span index cannot label user bytes as another known journal field', async () => {
+  const f = new Fixture(); f.journal = f.journal!.replace('"User":', '"Assistant":');
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'journal-index' }] });
+});
+test('nested manifest unknown fields are noted and skipped while invalid known metadata is an error', async () => {
+  const f = new Fixture();
+  f.extraManifest = { dekopon: { version: '0.66.0', source: { repository: 'synthetic', commit: 'synthetic', future: 'METADATA_CANARY' } } };
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.notes).toContainEqual(expect.objectContaining({ kind: 'unknown-field', name: 'future' }));
+  expect(JSON.stringify(r)).not.toContain('METADATA_CANARY');
+  f.extraManifest = { dekopon: { version: '0.66.0', source: [] } };
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'manifest-shape' }] });
+});
+test('model events whose owning span was lost remain calls with explicit session gaps', async () => {
+  const f = new Fixture(), owner = f.spans[2];
+  f.spans = f.spans.filter(s => s !== owner);
+  const prompts = owner.events;
+  f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: prompts.map(e => ({
+    traceId: traceA, spanId: owner.spanId, timeUnixNano: e.timeUnixNano, body: { stringValue: e.name }, attributes: e.attributes,
+  })) }] }] };
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.messages[0].calls[0]).toMatchObject({ key: { spanId: owner.spanId }, session: { state: 'unknown', gap: { kind: 'session-identity' } } });
+});
+test('finite OTLP doubles stay valid while fractional or floating point timestamps are refused', async () => {
+  const f = new Fixture();
+  f.traceOverride = '{"resourceSpans":[{"resource":{"attributes":[{"key":"future","value":{"doubleValue":1e100}}]}}]}';
+  expect((await readTrialBundle(await f.files())).ok).toBe(true);
+  f.traceOverride = '{"resourceSpans":[{"scopeSpans":[{"spans":[{"startTimeUnixNano":1.0}]}]}]}';
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'otlp-scalar' }] });
 });

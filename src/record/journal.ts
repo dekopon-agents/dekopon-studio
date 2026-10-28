@@ -1,6 +1,6 @@
 import { array, Context, decode, field, integer, lines, object, parse, text, unknownFields } from './json';
 import type { ObjectValue, Value } from './json';
-import type { Arrival, AssetInventory, JournalChange, JournalItem, JournalRecord, JournalSpan,
+import type { Fact, Arrival, AssetInventory, JournalChange, JournalItem, JournalRecord, JournalSpan,
   Location, ModelIdentity, Slot, Subject } from './types';
 
 const shape = 'journal-shape';
@@ -41,14 +41,14 @@ function slot(v: Value, c: Context, at: Location): Slot {
   c.note('unknown-variant', at, keys[0]); return { state: 'unknown', variant: keys[0] };
 }
 function slots(v: Value | undefined, c: Context, at: Location) { return a(v, c, at).map(v => slot(v, c, at)); }
-function rung(v: Value | undefined, c: Context, at: Location): string | null {
-  if (v === undefined || v === null) return null;
-  if (v === 'native' || v === 'metadata') return v;
-  if (typeof v === 'string') { c.note('unknown-variant', at, v); return null; }
+function rung(v: Value | undefined, c: Context, at: Location): Fact<string | null> {
+  if (v === undefined || v === null) return { state: 'known', value: null };
+  if (v === 'native' || v === 'metadata') return { state: 'known', value: v };
+  if (typeof v === 'string') { c.note('unknown-variant', at, v); return c.unknown('evidence-field', at, { attribute: 'rung' }); }
   const r = o(v, c, at);
   if (Object.keys(r).length !== 1) c.fail(shape, at);
-  if (r.summary !== undefined) return 'summary-' + u(r.summary, c, at, 1n, 255n);
-  c.note('unknown-variant', at, Object.keys(r)[0]); return null;
+  if (r.summary !== undefined) return { state: 'known', value: 'summary-' + u(r.summary, c, at, 1n, 255n) };
+  c.note('unknown-variant', at, Object.keys(r)[0]); return c.unknown('evidence-field', at, { attribute: 'rung' });
 }
 function subject(v: Value | undefined, c: Context, at: Location): Subject {
   if (v === undefined || v === 'record') return { kind: 'record' };
@@ -161,13 +161,18 @@ function header(v: Value, body: Body, path: string, at: Location, c: Context): J
     const expectedKind = fieldName === 'Opaque' ? 'raw' : 'escaped';
     if (s.kind !== expectedKind) c.fail('journal-index', at);
     unknownFields(meta, ['original_bytes', 'model', 'tool', 'outcome'], c, at);
-    if (meta.original_bytes !== undefined) u(meta.original_bytes, c, at);
+    if (['User', 'Steer', 'Assistant', 'Plain', 'Arguments', 'Result'].includes(fieldName)) u(meta.original_bytes, c, at);
     if (fieldName === 'Opaque') model(meta.model, c, at);
     if (fieldName === 'Arguments') {
       const tool = t(meta.tool, c, at); if (!tools.includes(tool)) c.note('unknown-variant', at, tool);
     }
     if (fieldName === 'Result') outcome(meta.outcome, c, at);
     const source = body.items[Number(index)];
+    const expectedItemKind = ({ User: 'user', Steer: 'steer', Assistant: 'assistant', Plain: 'reasoning', Opaque: 'opaque',
+      CallId: 'exchange', RejectedTool: 'exchange', Arguments: 'exchange', Result: 'exchange' } as Record<string, string>)[fieldName];
+    if (source && source.kind !== expectedItemKind) c.fail('journal-index', at);
+    if (['User', 'Steer', 'Assistant', 'Plain'].includes(fieldName) && source && meta.original_bytes !== undefined &&
+      u(meta.original_bytes, c, at) !== source.originalBytes) c.fail('journal-index', at);
     const expected = fieldName === 'CallId' ? source?.callId : fieldName === 'Arguments' ? source?.arguments
       : fieldName === 'Result' ? source?.result : fieldName === 'RejectedTool' ? source?.tool : source?.text;
     const slice = body.bytes.subarray(Number(relOffset), Number(BigInt(relOffset) + BigInt(len)));
@@ -205,12 +210,19 @@ export function journal(bytes: Uint8Array, path: string, c: Context): JournalRec
     const at = { path, line: line.line };
     if (!line.terminated) { c.gap('journal-tail', at); break; }
     const envelope = o(parse(decode(line.bytes, c, at), c, at), c, at);
-    if (Object.keys(envelope).length !== 1) c.fail(shape, at);
-    const tag = Object.keys(envelope)[0];
+    const tags = Object.keys(envelope).filter(key => ['b', 'h', 's', 'p', 'c'].includes(key));
+    if (tags.length > 1) c.fail(shape, at);
+    for (const key of Object.keys(envelope)) if (!tags.includes(key))
+      c.note(tags.length ? 'unknown-field' : 'unknown-variant', at, key);
+    if (!tags.length) continue;
+    const tag = tags[0];
     if (tag === 'b') {
       if (body) c.fail('journal-reference', at);
       const rawItems = a(envelope.b, c, at);
-      body = { bytes: line.bytes, rawItems, items: rawItems.map((v, i) => item(v, c, field(at, 'b[' + i + ']'))) };
+      body = { bytes: line.bytes, rawItems, items: rawItems.map((v, i) => {
+        const decoded = item(v, c, field(at, 'b[' + i + ']'));
+        return decoded ? { ...decoded, item: String(i) } : undefined;
+      }) };
     } else if (tag === 'h') {
       if (!body) c.fail('journal-reference', at);
       const record = header(envelope.h, body, path, at, c);
@@ -222,11 +234,12 @@ export function journal(bytes: Uint8Array, path: string, c: Context): JournalRec
         : tag === 'p' ? ['atMs', 'record', 'pin', 'subject'] : ['atMs', 'record', 'choice'], c, at);
       const record = byId.get(u(side.record, c, at, 1n));
       if (!record) c.fail('journal-reference', at);
+      if (tag === 'c' && (side.choice === undefined || side.choice === null)) c.fail(shape, at);
       const subj = tag === 'c' ? { kind: 'record' as const } : subject(side.subject, c, at);
       const change: JournalChange = { at, atMs: u(side.atMs, c, at), subject: subj,
         change: tag === 's' ? { kind: 'slot', part: u(side.part, c, at, 1n, 255n), slot: slot(side.slot as Value, c, at) }
           : tag === 'p' ? { kind: 'pin', rung: rung(side.pin, c, at) }
-            : { kind: 'choice', rung: rung(side.choice, c, at) ?? 'unknown' } };
+            : { kind: 'choice', rung: rung(side.choice, c, at) } };
       if (subj.kind === 'record') {
         switch (change.change.kind) {
           case 'slot': {

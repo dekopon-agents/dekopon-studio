@@ -26,15 +26,15 @@ export interface ReadError {
     | 'reader-failure';
   at: Location;
 }
-export interface FileReference { path: string; sha256: string; bytes: string }
+export interface FileReference { at: Location; path: string; sha256: string; bytes: string }
 export interface EvidenceRecord {
   key: SpanKey; at: Location; name: string; time: string; origin: 'span' | 'log';
   attributes: { [key: string]: Json };
 }
-export interface ToolSet { key: SpanKey; definitions: Json[] }
+export interface ToolSet { key: SpanKey; definitions: Json[]; definitionsJson: string }
 export interface ModelCall {
   key: SpanKey; session: Fact<SpanKey>; turn: Fact<string>;
-  input: Fact<{ provenance: 'reconstructed'; messages: Json[]; prompts: Location[] }>;
+  input: Fact<{ provenance: 'reconstructed'; messages: Json[]; messagesJson: string; prompts: Location[] }>;
   tools: Fact<SpanKey>; answer: Fact<EvidenceRecord>; settings: Record<string, Fact<Json>>;
   completionSpans: SpanKey[];
 }
@@ -43,7 +43,7 @@ export interface ToolExchange {
 }
 export interface ChatMessage {
   traceId: string; ordinal: number; anchor: SpanKey; startedAt: string;
-  calls: ModelCall[]; tools: ToolExchange[]; evidence: EvidenceRecord[];
+  finalAnswer: Fact<EvidenceRecord>; calls: ModelCall[]; tools: ToolExchange[]; evidence: EvidenceRecord[];
 }
 export type Subject = { kind: 'record' } | { kind: 'asset'; number: string } | { kind: 'unknown' };
 export type Slot =
@@ -53,6 +53,7 @@ export type Slot =
   | { state: 'unknown'; variant: string };
 export interface ModelIdentity { backend: string; upstream: string; reported: string | null }
 export interface JournalItem {
+  item?: string;
   kind: 'user' | 'steer' | 'assistant' | 'reasoning' | 'opaque' | 'exchange' | 'asset';
   text?: string; originalBytes?: string; model?: ModelIdentity; number?: string;
   callId?: string; tool?: string; arguments?: string; result?: string; outcome?: Json;
@@ -68,24 +69,24 @@ export interface AssetInventory {
 }
 export interface JournalChange {
   at: Location; atMs: string; subject: Subject;
-  change: { kind: 'slot'; part: string; slot: Slot } | { kind: 'pin'; rung: string | null }
-    | { kind: 'choice'; rung: string };
+  change: { kind: 'slot'; part: string; slot: Slot } | { kind: 'pin'; rung: Fact<string | null> }
+    | { kind: 'choice'; rung: Fact<string | null> };
 }
 export interface JournalKey { agent: string; stem: string; recordId: string }
 export interface JournalRecord {
   key: JournalKey; at: Location; turn: string; atMs: string; model: ModelIdentity;
   grant: number[]; nextRecordId: string; nextAssetId: string; items: JournalItem[];
   spans: JournalSpan[]; plan: { model: string; parts: string[]; maxInputBytes: string } | null;
-  initialSummaries: Slot[]; summaries: Slot[]; pin: string | null; choice: string | null;
+  initialSummaries: Slot[]; summaries: Slot[]; pin: Fact<string | null>; choice: Fact<string | null>;
   arrivals: Arrival[]; assets: AssetInventory[]; changes: JournalChange[];
   representations: { id: string; part?: string }[];
   publications: EvidenceRecord[]; summaryCalls: SpanKey[];
 }
 export interface SummaryCall {
-  task: SpanKey; evidenceKind: 'summary-task' | 'model-complete';
+  taskAttributes: Record<string, Json>; task: SpanKey; evidenceKind: 'summary-task' | 'model-complete';
   key: SpanKey; at: Location; recordId: Fact<string>; part: Fact<string>;
   input: { state: 'unknown'; gap: Extract<Gap, { kind: 'summary-input-unavailable' }> };
-  records: JournalKey[]; transitions: EvidenceRecord[];
+  recordCandidates: JournalKey[]; transitions: EvidenceRecord[];
   settings: Record<string, Fact<Json>>; completionSpans: SpanKey[];
 }
 export interface ChatRecord {

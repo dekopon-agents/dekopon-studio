@@ -40,7 +40,6 @@ export function integer(value: Value | undefined, c: Context, at: Location, kind
   min = 0n, max = 18446744073709551615n, strings = false): string {
   let n: bigint;
   if (typeof value === 'bigint') n = value;
-  else if (typeof value === 'number' && Number.isSafeInteger(value)) n = BigInt(value);
   else if (strings && typeof value === 'string' && /^-?[0-9]{1,20}$/.test(value)) n = BigInt(value);
   else return c.fail(kind, at);
   if (n < min || n > max) c.fail(kind, at);
@@ -48,7 +47,6 @@ export function integer(value: Value | undefined, c: Context, at: Location, kind
 }
 export function decimal(value: Value | undefined): string | undefined {
   if (typeof value === 'bigint' && value >= 0n && value <= 18446744073709551615n) return value.toString();
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
   if (typeof value === 'string' && /^[0-9]{1,20}$/.test(value) && BigInt(value) <= 18446744073709551615n) return BigInt(value).toString();
 }
 export function unknownFields(o: ObjectValue, keys: readonly string[], c: Context, at: Location) {
@@ -64,8 +62,9 @@ export function parse(raw: string, c: Context, at: Location): Value {
       if (typeof value === 'number') {
         if (!Number.isFinite(value)) c.fail('json', at);
         if (context?.source && /^-?[0-9]+$/.test(context.source)) return BigInt(context.source);
-        if (Number.isInteger(value) && !Number.isSafeInteger(value)) c.fail('json', at);
+        if (!context?.source && Number.isInteger(value) && !Number.isSafeInteger(value)) c.fail('json', at);
       }
+      if (typeof value === 'number' && !context?.source && Number.isSafeInteger(value)) return BigInt(value);
       return value;
     }) as Value;
   } catch (error) {
@@ -73,10 +72,10 @@ export function parse(raw: string, c: Context, at: Location): Value {
     return c.fail('json', at);
   }
 }
-export function json(value: Value): Json {
-  if (typeof value === 'bigint') return value.toString();
-  if (Array.isArray(value)) return value.map(json);
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, json(v)]));
+export function json(value: Value, safeNumbers = false): Json {
+  if (typeof value === 'bigint') return safeNumbers && value >= -9007199254740991n && value <= 9007199254740991n ? Number(value) : value.toString();
+  if (Array.isArray(value)) return value.map(v => json(v, safeNumbers));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, json(v, safeNumbers)]));
   return value;
 }
 export function lines(bytes: Uint8Array): { bytes: Uint8Array; line: number; terminated: boolean }[] {

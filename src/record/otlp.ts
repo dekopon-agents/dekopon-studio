@@ -31,6 +31,8 @@ function value(v: Value | undefined, c: Context, at: Location, depth: number): V
     case 'doubleValue': {
       if (!['number', 'bigint', 'string'].includes(typeof inner) || typeof inner === 'string' && !inner.trim())
         c.fail('otlp-scalar', loc);
+      if (typeof inner === 'string' && !/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(inner.trim()))
+        c.fail('otlp-scalar', loc);
       const number = Number(inner);
       if (!Number.isFinite(number)) c.fail('otlp-scalar', loc);
       return number;
@@ -73,7 +75,9 @@ export function otlp(bytes: Uint8Array, path: string, logs: boolean, c: Context)
       const r = object(resource, c, at, 'otlp-shape');
       unknownFields(r, ['resource', scopes, 'schemaUrl'], c, at);
       const res = object(r.resource === undefined ? {} : r.resource, c, at, 'otlp-shape');
-      unknownFields(res, ['attributes', 'droppedAttributesCount'], c, at); attrs(res, c, at);
+      unknownFields(res, ['attributes', 'droppedAttributesCount'], c, at);
+      for (const key of Object.keys(attrs(res, c, at))) if (!['service.name', 'service.version', 'service.instance.id'].includes(key))
+        c.note('unknown-field', field(at, 'resource.attributes'), key);
       for (const scope of arr(r, scopes, c, at)) {
         const s = object(scope, c, at, 'otlp-shape');
         unknownFields(s, ['scope', logs ? 'logRecords' : 'spans', 'schemaUrl'], c, at);
@@ -81,7 +85,7 @@ export function otlp(bytes: Uint8Array, path: string, logs: boolean, c: Context)
         unknownFields(instrumentation, ['name', 'version', 'attributes', 'droppedAttributesCount'], c, at);
         str(instrumentation, 'name', c, at);
         if (instrumentation.version !== undefined) str(instrumentation, 'version', c, at);
-        attrs(instrumentation, c, at);
+        for (const key of Object.keys(attrs(instrumentation, c, at))) c.note('unknown-field', field(at, 'scope.attributes'), key);
         for (const [index, item] of arr(s, logs ? 'logRecords' : 'spans', c, at).entries()) {
           const loc = field(at, (logs ? 'logRecords' : 'spans') + '[' + index + ']');
           const o = object(item, c, loc, 'otlp-shape'), attributes = attrs(o, c, loc);

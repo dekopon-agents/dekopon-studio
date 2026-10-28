@@ -54,7 +54,7 @@ function embedded(v: Value | undefined, c: Context, at: Location): Value {
 function decFact(v: Value | undefined, c: Context, at: Location, kind: 'model-turn' | 'record-missing' | 'summary-missing'): Fact<string> {
   if (v === undefined) return c.unknown(kind, at);
   const n = decimal(v);
-  if (n === undefined) c.fail('known-event-shape', at);
+  if (n === undefined || n === '0') c.fail('known-event-shape', at);
   return known(n);
 }
 function bounded(o: ObjectValue, key: string, c: Context, at: Location, requiredLength: boolean): boolean {
@@ -69,7 +69,15 @@ function bounded(o: ObjectValue, key: string, c: Context, at: Location, required
   }
   return true;
 }
-function validate(e: Event, c: Context) {
+function validate(e: Event, c: Context): boolean {
+  let final = false;
+  if (e.name === 'agent.model.answer') {
+    const answer = bounded(e.attributes, 'answer', c, e.at, false);
+    if (bounded(e.attributes, 'tool_calls', c, e.at, false)) {
+      const calls = array(embedded(e.attributes.tool_calls, c, e.at), c, e.at, 'known-event-shape');
+      final = answer && !calls.length && e.attributes['stream.interrupted'] !== true;
+    }
+  }
   for (const [key, v] of Object.entries(e.attributes)) {
     if (!attributes.has(key) && !incidental(key)) c.note('unknown-field', e.at, key);
     if (['model.turn', 'message.count', 'transcript.segment', 'transcript.segments', 'memory.record.id',
@@ -81,6 +89,7 @@ function validate(e: Event, c: Context) {
       c.fail('known-event-shape', field(e.at, key));
     if (key === 'stream.interrupted' && typeof v !== 'boolean') c.fail('known-event-shape', field(e.at, key));
   }
+  return final;
 }
 function callSettings(completes: Span[], at: Location, c: Context): Record<string, Fact<Json>> {
   const o = completes[0]?.attributes ?? {};
@@ -107,16 +116,18 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
     return false;
   }
   const events = unique(exported.events), recognized: Event[] = [];
+  const finals = new Map<string, Event>();
   for (const e of events) {
     if (!names.has(e.name)) { c.note('unknown-event', e.at, e.name); continue; }
-    validate(e, c); recognized.push(e); record.evidence.push(publicEvent(e));
+    if (validate(e, c)) finals.set(e.key.traceId, e);
+    recognized.push(e); record.evidence.push(publicEvent(e));
   }
   for (const s of exported.spans) {
     if (!spans.has(s.name)) c.note('unknown-span', s.at, s.name);
     for (const key of Object.keys(s.attributes)) if (!attributes.has(key) && !incidental(key)) c.note('unknown-field', s.at, key);
     if (s.name === 'shell.command') {
       for (const key of ['shell.command.arguments', 'shell.command.output']) bounded(s.attributes, key, c, s.at, true);
-      for (const key of ['shell.command.name', 'outcome']) if (typeof s.attributes[key] !== 'string')
+      for (const key of ['shell.command.name', 'outcome']) if (typeof s.attributes[key] !== 'string' || !wellFormed(s.attributes[key] as string))
         c.gap('evidence-field', s.at, { attribute: key });
       if (decimal(s.attributes['shell.command.exit_code']) === undefined) c.gap('evidence-field', s.at, { attribute: 'shell.command.exit_code' });
     }
@@ -128,12 +139,20 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
   }
   const byTrace = new Map<string, ChatMessage>();
   for (const [ordinal, s] of [...anchors.values()].sort((a, b) => compare(a.start, b.start)).entries()) {
+    const final = finals.get(s.key.traceId);
     const message: ChatMessage = { traceId: s.key.traceId, ordinal: ordinal + 1, anchor: s.key,
-      startedAt: s.start, calls: [], tools: [], evidence: record.evidence.filter(e => e.key.traceId === s.key.traceId) };
+      startedAt: s.start, finalAnswer: final ? known(publicEvent(final)) : c.unknown('missing-answer', s.at, s.key), calls: [], tools: [], evidence: record.evidence.filter(e => e.key.traceId === s.key.traceId) };
     record.messages.push(message); byTrace.set(message.traceId, message);
   }
-  const state = new Map<string, { messages?: Json[]; prompts: Location[]; tools?: SpanKey }>();
-  const turns = exported.spans.filter(s => s.name === 'prompt.model_turn').sort((a, b) => compare(a.start, b.start));
+  const state = new Map<string, { messages?: Json[]; messagesJson?: string; prompts: Location[]; tools?: SpanKey }>();
+  const turns = exported.spans.filter(s => s.name === 'prompt.model_turn');
+  const missingOwners = new Set<string>();
+  for (const e of recognized) if (['agent.model.prompt', 'agent.model.answer'].includes(e.name) &&
+    !index.has(id(e.key)) && !missingOwners.has(id(e.key))) {
+    missingOwners.add(id(e.key));
+    turns.push({ key: e.key, at: e.at, parent: '', name: 'prompt.model_turn', start: e.time, end: e.time, attributes: {} });
+  }
+  turns.sort((a, b) => compare(a.start, b.start));
   for (const span of turns) {
     const sessionSpan = index.get(id({ traceId: span.key.traceId, spanId: span.parent }));
     const session = sessionSpan?.name === 'prompt.session' ? known(sessionSpan.key)
@@ -149,7 +168,6 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
       tools: c.unknown('tool-definitions', span.at, span.key),
       answer: answers.length ? known(publicEvent(answers[answers.length - 1])) : c.unknown('missing-answer', span.at, span.key),
       settings: callSettings(completes, span.at, c), completionSpans: completes.map(s => s.key) };
-    // The initial placeholders are replaced below, so only actual missing facts remain gaps.
     const inputGap = call.input.state === 'unknown' ? call.input.gap : undefined;
     const toolsGap = call.tools.state === 'unknown' ? call.tools.gap : undefined;
     if (prompts.length) {
@@ -169,21 +187,25 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
       } else if (!pieces.every(e => bounded(e.attributes, 'messages', c, e.at, false))) {
         call.input = c.unknown('prompt-continuity', first.at, span.key); accumulated.messages = undefined;
       } else {
-        const decoded = array(parse(pieces.map(e => e.attributes.messages as string).join(''), c, first.at), c, first.at, 'known-event-shape');
+        const encoded = pieces.map(e => e.attributes.messages as string).join('');
+        const decoded = array(parse(encoded, c, first.at), c, first.at, 'known-event-shape');
         for (const message of decoded) {
           const m = object(message, c, first.at, 'known-event-shape');
           text(m.role, c, first.at, 'known-event-shape');
         }
-        const messages = decoded.map(json);
+        const messages = decoded.map(v => json(v, true));
         const next = scope === 'full' ? messages : scope === 'delta' && accumulated.messages
           ? [...accumulated.messages, ...messages] : undefined;
         if (scope !== 'full' && scope !== 'delta' && typeof scope === 'string') c.note('unknown-variant', first.at, scope);
         if (!next || count === undefined || BigInt(count) !== BigInt(next.length)) {
           call.input = c.unknown('prompt-continuity', first.at, span.key); accumulated.messages = undefined;
         } else {
+          const old = accumulated.messagesJson?.trim().slice(1, -1) ?? '';
+          const added = encoded.trim().slice(1, -1);
+          accumulated.messagesJson = scope === 'full' ? encoded : '[' + [old, added].filter(s => s.trim()).join(',') + ']';
           accumulated.messages = next;
           accumulated.prompts = scope === 'full' ? pieces.map(e => e.at) : [...accumulated.prompts, ...pieces.map(e => e.at)];
-          call.input = known({ provenance: 'reconstructed', messages: next, prompts: [...accumulated.prompts] });
+          call.input = known({ provenance: 'reconstructed', messages: next, messagesJson: accumulated.messagesJson, prompts: [...accumulated.prompts] });
         }
       }
       if (scope === 'full') {
@@ -192,7 +214,7 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
         if (segmentOne?.attributes['gen_ai.tool.definitions'] !== undefined) {
           const definitions = array(embedded(segmentOne.attributes['gen_ai.tool.definitions'], c, segmentOne.at), c, segmentOne.at, 'known-event-shape');
           for (const definition of definitions) object(definition, c, segmentOne.at, 'known-event-shape');
-          record.toolSets.push({ key: span.key, definitions: definitions.map(json) }); accumulated.tools = span.key;
+          record.toolSets.push({ key: span.key, definitions: definitions.map(v => json(v, true)), definitionsJson: segmentOne.attributes['gen_ai.tool.definitions'] as string }); accumulated.tools = span.key;
         }
       }
     } else accumulated.messages = undefined;
@@ -265,9 +287,10 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
       const gap = { kind: 'summary-input-unavailable' as const, at: span.at, ...span.key,
         missingAttribute: 'agent.model.prompt' as const };
       c.gaps.push(gap);
-      record.summaryCalls.push({ key: span.key, task: task.key, evidenceKind: span === task ? 'summary-task' : 'model-complete',
+      record.summaryCalls.push({ key: span.key, taskAttributes: Object.fromEntries(Object.entries(task.attributes)
+        .filter(([key]) => attributes.has(key)).map(([key, v]) => [key, json(v)])), task: task.key, evidenceKind: span === task ? 'summary-task' : 'model-complete',
         at: span.at, recordId, part, input: { state: 'unknown', gap },
-        records: candidates.map(r => r.key), transitions: recognized.filter(e => e.name === 'gateway_memory_summary_transition' &&
+        recordCandidates: candidates.map(r => r.key), transitions: recognized.filter(e => e.name === 'gateway_memory_summary_transition' &&
           id(e.key) === id(task.key)).map(publicEvent),
         settings: callSettings(span === task ? [] : [span], span.at, c), completionSpans: completes.map(s => s.key) });
       if (candidates.length === 1) candidates[0].summaryCalls.push(span.key);

@@ -1,5 +1,5 @@
-import { array, Context, decode, field, integer, json, known, object, parse, text, unknownFields } from './json';
-import type { ObjectValue, Value } from './json';
+import { array, Context, decode, field, integer, known, object, parse, text, unknownFields } from './json';
+import type { Value } from './json';
 import type { ChatRecord, FileReference, Location } from './types';
 
 export interface Bundle {
@@ -10,7 +10,7 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
   const bytes = files.get(root.path);
   if (!bytes) c.fail('manifest-shape', root);
   const m = object(parse(decode(bytes, c, root), c, root), c, root, 'manifest-shape');
-  if (m.bundleVersion !== 1n && m.bundleVersion !== 1) c.fail('bundle-version', field(root, 'bundleVersion'));
+  if (m.bundleVersion !== 1n) c.fail('bundle-version', field(root, 'bundleVersion'));
   if (m.kind !== 'trial') c.fail('manifest-shape', field(root, 'kind'));
   unknownFields(m, ['bundleVersion', 'kind', 'attempt', 'scenario', 'dekopon', 'providers', 'collector',
     'trace', 'logs', 'journal', 'freeze', 'config', 'stdout', 'driver', 'completeness', 'grade', 'gaps', 'seedDigest'], c, root);
@@ -27,7 +27,7 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
     const sha256 = text(o.sha256, c, field(at, 'sha256'), 'manifest-shape');
     if (!/^[a-f0-9]{64}$/.test(sha256)) c.fail('manifest-shape', field(at, 'sha256'));
     const size = integer(o.bytes, c, field(at, 'bytes'), 'manifest-shape');
-    references.push({ path, sha256, bytes: size });
+    references.push({ at, path, sha256, bytes: size });
     const content = files.get(path);
     if (!content) { c.gap('missing-file', { path }); return; }
     if (BigInt(content.length) !== BigInt(size)) c.fail('file-integrity', { path });
@@ -37,19 +37,73 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
     return path;
   }
   const identity: ChatRecord['identity'] = {};
-  if (m.dekopon !== undefined) {
-    const d = object(m.dekopon, c, field(root, 'dekopon'), 'manifest-shape');
+  type Decoder = (v: Value, at: Location) => import('./types').Json;
+  const string: Decoder = (v, at) => text(v, c, at, 'manifest-shape');
+  const unsigned: Decoder = (v, at) => integer(v, c, at, 'manifest-shape');
+  const signed: Decoder = (v, at) => integer(v, c, at, 'manifest-shape', -2147483648n, 2147483647n);
+  const boolean: Decoder = (v, at) => { if (typeof v !== 'boolean') c.fail('manifest-shape', at); return v; };
+  function metadata(v: Value, at: Location, schema: Record<string, Decoder>): import('./types').Json {
+    const o = object(v, c, at, 'manifest-shape');
+    unknownFields(o, Object.keys(schema), c, at);
+    const result: Record<string, import('./types').Json> = {};
+    for (const [key, decoder] of Object.entries(schema)) {
+      const loc = field(at, key);
+      if (o[key] === undefined) c.gap('bundle-evidence', loc, { attribute: key });
+      else result[key] = decoder(o[key], loc);
+    }
+    return result;
+  }
+  const source: Decoder = (v, at) => metadata(v, at, { repository: string, commit: string });
+  const artifact: Decoder = (v, at) => metadata(v, at, { name: string, version: string, source, sha256: string });
+  const nullable = (decoder: Decoder): Decoder => (v, at) => v === null ? null : decoder(v, at);
+  const list = (decoder: Decoder): Decoder => (v, at) =>
+    array(v, c, at, 'manifest-shape').map((entry, i) => decoder(entry, field(at, String(i))));
+  const binaries: Decoder = (v, at) => {
+    const b = object(v, c, at, 'manifest-shape');
+    return Object.fromEntries(Object.entries(b).map(([name, value]) =>
+      [name, metadata(value, field(at, name), { version: string, sha256: string })]));
+  };
+  const d = m.dekopon === undefined ? undefined : object(m.dekopon, c, field(root, 'dekopon'), 'manifest-shape');
+  if (d) {
     unknownFields(d, ['version', 'source', 'artifact', 'binaries'], c, field(root, 'dekopon'));
     if (d.version !== undefined) text(d.version, c, field(root, 'dekopon.version'), 'manifest-shape');
-    for (const k of ['source', 'artifact', 'binaries']) if (d[k] !== undefined) identity[k] = json(d[k]);
   }
-  const d = m.dekopon as ObjectValue | undefined;
   const dekoponVersion = d?.version === undefined
     ? c.unknown<string>('bundle-evidence', field(root, 'dekopon.version')) : known(d.version as string);
-  for (const k of ['attempt', 'providers', 'collector', 'seedDigest']) if (m[k] !== undefined) identity[k] = json(m[k]);
-  const freeze = m.freeze === null || m.freeze === undefined
-    ? c.unknown<import('./types').Json>('freeze', field(root, 'freeze'))
-    : known(json(object(m.freeze, c, field(root, 'freeze'), 'manifest-shape')));
+  for (const [key, decoder] of Object.entries({ source, artifact, binaries })) {
+    const at = field(root, 'dekopon.' + key);
+    if (d?.[key] === undefined) c.gap('bundle-evidence', at, { attribute: key });
+    else identity[key] = decoder(d[key], at);
+  }
+  const identityDecoders: Record<string, Decoder> = {
+    attempt: (v, at) => metadata(v, at, { id: string, startedAt: string, finishedAt: nullable(string) }),
+    providers: list((v, at) => metadata(v, at, { id: string, name: string, version: string, source, sha256: string })),
+    collector: (v, at) => metadata(v, at, { image: string, exitCode: nullable(signed), forcedKill: boolean }),
+    seedDigest: nullable(string),
+  };
+  for (const [key, decoder] of Object.entries(identityDecoders)) {
+    const at = field(root, key);
+    if (m[key] === undefined) c.gap('bundle-evidence', at, { attribute: key });
+    else identity[key] = decoder(m[key], at);
+  }
+  let freeze: ChatRecord['freeze'];
+  if (m.freeze === null || m.freeze === undefined) freeze = c.unknown('freeze', field(root, 'freeze'));
+  else {
+    const normalized = metadata(m.freeze, field(root, 'freeze'), {
+      lastRepliedMessage: unsigned,
+      conversation: (v, at) => metadata(v, at, { kind: string, id: string,
+        ...(typeof v === 'object' && v !== null && !Array.isArray(v) && v.container !== undefined ? { container: string } : {}),
+        ...(typeof v === 'object' && v !== null && !Array.isArray(v) && v.thread !== undefined ? { thread: string } : {}) }),
+      journalStems: list(string),
+      gateway: (v, at) => metadata(v, at, { signal: string, drained: boolean, exitCode: signed }),
+      copiedAt: string,
+    }) as Record<string, import('./types').Json>;
+    const gateway = normalized.gateway as Record<string, import('./types').Json> | undefined;
+    freeze = gateway?.signal === 'SIGTERM' && gateway.drained === true && gateway.exitCode === '0' &&
+      normalized.lastRepliedMessage !== undefined && normalized.copiedAt !== undefined &&
+      normalized.conversation !== undefined && normalized.journalStems !== undefined
+      ? known(normalized) : c.unknown('freeze', field(root, 'freeze'));
+  }
   let completeness: ChatRecord['completeness'];
   if (m.completeness === undefined) completeness = c.unknown('incomplete-bundle', field(root, 'completeness'));
   else {
