@@ -1,0 +1,101 @@
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export interface Location { path: string; line?: number; field?: string }
+export interface SpanKey { traceId: string; spanId: string }
+type GapKind =
+  | 'bundle-evidence' | 'incomplete-bundle' | 'missing-file' | 'freeze'
+  | 'journal-missing' | 'journal-tail' | 'truncated-attribute' | 'evidence-field'
+  | 'prompt-segments' | 'prompt-continuity' | 'missing-prompt' | 'missing-answer'
+  | 'session-identity' | 'model-turn' | 'tool-definitions' | 'tool-exchange'
+  | 'summary-missing' | 'summary-truncated' | 'publication-missing' | 'record-missing'
+  | 'ambiguous-record-join' | 'selection-reason' | 'unknown-setting'
+  | 'opaque-content' | 'image-bytes' | 'evicted-record' | 'append-failure'
+  | 'decider-probability';
+export type Gap =
+  | { kind: GapKind; at: Location; attribute?: string; traceId?: string; spanId?: string;
+      recordId?: string; part?: string; detail?: string }
+  | { kind: 'journal-format'; at: Location; version: string | null }
+  | { kind: 'summary-input-unavailable'; at: Location; traceId: string; spanId: string;
+      missingAttribute: 'agent.model.prompt' };
+export interface Note { kind: 'unknown-field' | 'unknown-span' | 'unknown-event' | 'unknown-variant';
+  at: Location; name: string }
+export type Fact<T> = { state: 'known'; value: T } | { state: 'unknown'; gap: Gap };
+export interface ReadError {
+  kind: 'utf8' | 'json' | 'manifest-shape' | 'bundle-version' | 'bundle-path'
+    | 'file-integrity' | 'otlp-shape' | 'otlp-scalar' | 'otlp-depth'
+    | 'known-event-shape' | 'journal-shape' | 'journal-index' | 'journal-reference'
+    | 'reader-failure';
+  at: Location;
+}
+export interface FileReference { at: Location; path: string; sha256: string; bytes: string }
+export interface EvidenceRecord {
+  key: SpanKey; at: Location; name: string; time: string; origin: 'span' | 'log';
+  attributes: { [key: string]: Json };
+}
+export interface ToolSet { key: SpanKey; definitions: Json[]; definitionsJson: string }
+export interface ModelCall {
+  key: SpanKey; session: Fact<SpanKey>; turn: Fact<string>;
+  input: Fact<{ provenance: 'reconstructed'; messages: Json[]; messagesJson: string; prompts: Location[] }>;
+  tools: Fact<SpanKey>; answer: Fact<EvidenceRecord>; settings: Record<string, Fact<Json>>;
+  completionSpans: SpanKey[];
+}
+export interface ToolExchange {
+  callId: Fact<string>; script: Fact<string>; output: Fact<string>;
+}
+export interface ChatMessage {
+  traceId: string; ordinal: number; anchor: SpanKey; startedAt: string;
+  finalAnswer: Fact<EvidenceRecord>; calls: ModelCall[]; tools: ToolExchange[]; evidence: EvidenceRecord[];
+}
+export type Subject = { kind: 'record' } | { kind: 'asset'; number: string } | { kind: 'unknown' };
+export type Slot =
+  | { state: 'queued' | 'running' }
+  | { state: 'generated'; text: string }
+  | { state: 'error'; failure: string; detail: string; ioKind?: string }
+  | { state: 'unknown'; variant: string };
+export interface ModelIdentity { backend: string; upstream: string; reported: string | null }
+export interface JournalItem {
+  item?: string;
+  kind: 'user' | 'steer' | 'assistant' | 'reasoning' | 'opaque' | 'exchange' | 'asset';
+  text?: string; originalBytes?: string; model?: ModelIdentity; number?: string;
+  callId?: string; tool?: string; arguments?: string; result?: string; outcome?: Json;
+}
+export interface JournalSpan {
+  item: string; field: string; kind: 'escaped' | 'raw'; relOffset: string; len: string;
+}
+export interface Arrival {
+  item: string; number: string; kind: string; bytes: string | null; summaries: Slot[];
+}
+export interface AssetInventory {
+  id: string; atMs: string; name: string; mime: string; size?: string;
+}
+export interface JournalChange {
+  at: Location; atMs: string; subject: Subject;
+  change: { kind: 'slot'; part: string; slot: Slot } | { kind: 'pin'; rung: Fact<string | null> }
+    | { kind: 'choice'; rung: Fact<string | null> };
+}
+export interface JournalKey { agent: string; stem: string; recordId: string }
+export interface JournalRecord {
+  key: JournalKey; at: Location; turn: string; atMs: string; model: ModelIdentity;
+  grant: number[]; nextRecordId: string; nextAssetId: string; items: JournalItem[];
+  spans: JournalSpan[]; plan: { model: string; parts: string[]; maxInputBytes: string } | null;
+  initialSummaries: Slot[]; summaries: Slot[]; pin: Fact<string | null>; choice: Fact<string | null>;
+  arrivals: Arrival[]; assets: AssetInventory[]; changes: JournalChange[];
+  representations: { id: string; part?: string }[];
+  publications: EvidenceRecord[]; summaryCalls: SpanKey[];
+}
+export interface SummaryCall {
+  taskAttributes: Record<string, Json>; task: SpanKey; evidenceKind: 'summary-task' | 'model-complete';
+  key: SpanKey; at: Location; recordId: Fact<string>; part: Fact<string>;
+  input: { state: 'unknown'; gap: Extract<Gap, { kind: 'summary-input-unavailable' }> };
+  recordCandidates: JournalKey[]; transitions: EvidenceRecord[];
+  settings: Record<string, Fact<Json>>; completionSpans: SpanKey[];
+}
+export interface ChatRecord {
+  readerVersion: 1; bundleVersion: 1; dekoponVersion: Fact<string>;
+  references: FileReference[]; identity: { [key: string]: Json };
+  freeze: Fact<Json>; completeness: Fact<Json>;
+  messages: ChatMessage[]; unanchoredCalls: ModelCall[]; toolSets: ToolSet[]; journals: JournalRecord[];
+  summaryCalls: SummaryCall[]; evidence: EvidenceRecord[];
+  gaps: Gap[]; notes: Note[];
+}
+export type ReadResult = { ok: true; record: ChatRecord }
+  | { ok: false; errors: ReadError[]; notes: Note[] };
