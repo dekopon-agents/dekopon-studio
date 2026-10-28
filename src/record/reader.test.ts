@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { expect, test, vi } from 'vitest';
 import { readTrialBundle } from './index';
+import { steps } from '../studio/model';
 import type { Fact, ReadResult } from './types';
-import { attributes, definitions, event, Fixture, journalText, prompt, span, traceA, traceB, traceSummary } from './fixtures';
+import { attributes, definitions, event, Fixture, journalText, prompt, span, studioFixture, traceA, traceB, traceSummary } from './fixtures';
 
 function record(result: ReadResult) {
   expect(result.ok).toBe(true);
@@ -16,7 +17,7 @@ function value<T>(fact: Fact<T>): T {
 }
 test('two messages use their earliest trace anchors and rebuild full then delta with exported tools', async () => {
   const r = record(await readTrialBundle(await new Fixture().files()));
-  expect(r.readerVersion).toBe(1); expect(r.bundleVersion).toBe(1); expect(value(r.dekoponVersion)).toBe('0.66.0');
+  expect(r.readerVersion).toBe(2); expect(r.bundleVersion).toBe(1); expect(value(r.dekoponVersion)).toBe('0.66.0');
   expect(r.messages.map(m => m.traceId)).toEqual([traceA, traceB]);
   expect(r.messages.map(m => m.ordinal)).toEqual([1, 2]);
   expect(r.messages[1].anchor.spanId).toBe('2000000000000001');
@@ -207,6 +208,38 @@ test('a log copy of a span event is deduplicated by structured identity with the
   const r = record(await readTrialBundle(await f.files()));
   expect(r.journals[0].publications).toHaveLength(1); expect(r.journals[0].publications[0].origin).toBe('span');
 });
+test('two repeated steer observations survive in the reader and timeline while their log copies are suppressed', async () => {
+  const f = new Fixture(), session = f.spans[1];
+  const steers = [40, 50].map(time => event('gateway.progress', time, { kind: 'steered', turn: 2 }));
+  session.events.push(...steers);
+  f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: steers.map(e => ({
+    traceId: traceA, spanId: session.spanId, timeUnixNano: e.timeUnixNano,
+    body: { stringValue: e.name }, attributes: [...e.attributes, ...attributes({ level: 'INFO' })],
+  })) }] }] };
+  const r = record(await readTrialBundle(await f.files()));
+  const retained = r.evidence.filter(e => e.name === 'gateway.progress' && e.attributes.kind === 'steered');
+  expect(retained.map(e => ({ time: e.time, origin: e.origin, turn: e.attributes.turn }))).toEqual([
+    { time: steers[0].timeUnixNano, origin: 'span', turn: '2' },
+    { time: steers[1].timeUnixNano, origin: 'span', turn: '2' },
+  ]);
+  const timeline = steps(r).filter(step => step.event?.name === 'gateway.progress' && step.event.attributes.kind === 'steered');
+  expect(timeline.map(step => step.time)).toEqual(steers.map(e => e.timeUnixNano));
+  expect(new Set(timeline.map(step => step.id)).size).toBe(2);
+});
+test.each([0, 1])('repeated log observations remain when only %s span copies can be matched', async spanCopies => {
+  const f = new Fixture(), session = f.spans[1];
+  const steers = [40, 50].map(time => event('gateway.progress', time, { kind: 'steered', turn: 2 }));
+  session.events.push(...steers.slice(0, spanCopies));
+  f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: steers.map(e => ({
+    traceId: traceA, spanId: session.spanId, timeUnixNano: e.timeUnixNano,
+    body: { stringValue: e.name }, attributes: e.attributes,
+  })) }] }] };
+  const r = record(await readTrialBundle(await f.files()));
+  const retained = r.evidence.filter(e => e.name === 'gateway.progress' && e.attributes.kind === 'steered');
+  expect(retained.map(e => ({ time: e.time, origin: e.origin }))).toEqual(steers.map((e, i) => ({
+    time: e.timeUnixNano, origin: i < spanCopies ? 'span' : 'log',
+  })));
+});
 test('malformed known event shapes are errors and incorrect reference digests are refused', async () => {
   const f = new Fixture(); f.spans[2].events[0].attributes = attributes({ messages: true });
   expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'known-event-shape' }] });
@@ -318,4 +351,40 @@ test('a retained journal may start at any id and end with one unfinished body', 
   const r = record(await readTrialBundle(await f.files()));
   expect(r.journals.map(j => j.key.recordId)).toEqual(['7', '8']);
   expect(r.gaps).toContainEqual({ kind: 'journal-tail', at: { path: 'journal/agent/stem.jsonl' } });
+});
+
+
+test.each(['kind', 'id'])('freeze is unknown when its conversation lacks %s', async missing => {
+  const f = new Fixture();
+  f.extraManifest.freeze = { lastRepliedMessage: 2, conversation: { [missing === 'kind' ? 'id' : 'kind']: 'synthetic' },
+    journalStems: ['agent/stem'], gateway: { signal: 'SIGTERM', drained: true, exitCode: 0 }, copiedAt: '2026-10-28T00:00:01Z' };
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.freeze).toMatchObject({ state: 'unknown', gap: { kind: 'freeze' } });
+  expect(r.gaps).toContainEqual(expect.objectContaining({ kind: 'bundle-evidence', attribute: missing }));
+});
+test('bundle v1 refuses a non-null seedDigest as a typed manifest error', async () => {
+  const f = new Fixture(); f.extraManifest.seedDigest = 'a'.repeat(64);
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false,
+    errors: [{ kind: 'manifest-shape', at: { path: 'manifest.json', field: 'seedDigest' } }] });
+});
+
+
+test('record v2 retains admissions, interrupted attempts and replay with typed mailbox gaps', async () => {
+  const r = record(await readTrialBundle(await studioFixture().files()));
+  expect(r.messages[0].calls.map(call => value(call.outcome))).toEqual(['succeeded', 'steered', 'succeeded']);
+  expect(r.messages[0].calls.map(call => value(call.stepCap))).toEqual(['4', '4', '4']);
+  expect(r.admissions.map(a => [value(a.outcome), value(a.combinedDepth)])).toEqual([['steered', '1'], ['queued', '2']]);
+  expect(value(r.replays[1].priorTurns)).toBe('1');
+  expect(value(r.replays[1].priorBytes)).toBe('90');
+  expect(r.mailbox).toMatchObject({ steers: { state: 'unknown' }, followUps: { state: 'unknown' },
+    runningInterval: { gap: { kind: 'mailbox-state-unavailable' } }, completingInterval: { state: 'unknown' } });
+});
+test('missing admission depth is a typed gap while malformed depth is a typed error', async () => {
+  const f = studioFixture();
+  const admission = f.spans[0].events.find(e => e.name === 'gateway.admission')!;
+  admission.attributes = admission.attributes.filter(a => a.key !== 'queue.depth');
+  const r = record(await readTrialBundle(await f.files()));
+  expect(r.admissions[0].combinedDepth).toMatchObject({ state: 'unknown', gap: { kind: 'evidence-field', attribute: 'queue.depth' } });
+  admission.attributes.push(...attributes({ 'queue.depth': false }));
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'known-event-shape' }] });
 });

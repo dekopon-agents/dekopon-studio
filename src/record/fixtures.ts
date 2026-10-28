@@ -138,3 +138,44 @@ export class Fixture {
     return files;
   }
 }
+
+
+// v0.70.0 exports only admission depth, not mailbox inventories or state transitions.
+export function studioFixture(): Fixture {
+  const f = new Fixture(); f.version = '0.70.0';
+  f.spans[1].attributes = attributes({ 'prompt.max_steps': 4, 'prompt.max_capability_calls': 2 });
+  f.spans[1].events.push(event('gateway.progress', 11, { kind: 'started', max_steps: 4 }));
+  f.spans[2].events.push(event('gateway.progress', 23, { kind: 'answered', turn: 1, tool_calls: 1 }));
+  f.spans[2].events.push(event('accounting.model.turn', 23, { 'model.turn': 1, outcome: 'succeeded' }));
+  f.spans[3].events = [f.spans[3].events[0],
+    event('accounting.model.turn', 62, { 'model.turn': 2, outcome: 'steered' }),
+    event('agent.model.answer', 63, { 'model.turn': 2, answer: 'interrupted draft', tool_calls: '[]', 'stream.interrupted': true })];
+  f.spans[2].endTimeUnixNano = String(base + 29n);
+  f.spans[3].endTimeUnixNano = String(base + 69n);
+  f.spans.push(span(traceA, '1000000000000008', '1000000000000002', 'prompt.model_turn', 90, [
+    prompt(2, 'full', 5, [{ role: 'system', content: 'synthetic system' }, { role: 'user', content: 'first' },
+      { role: 'assistant', content: null }, { role: 'tool', content: 'synthetic output' },
+      { role: 'user', content: 'steer: include the synthetic detail' }], 91),
+    event('accounting.model.turn', 92, { 'model.turn': 2, outcome: 'succeeded' }),
+    event('agent.model.answer', 93, { 'model.turn': 2, answer: 'steered answer', tool_calls: '[]' }),
+  ], { 'model.turn': 2 }));
+  f.spans[0].events.push(event('gateway.message.received', 1, { text: 'first' }),
+    event('gateway.admission', 52, { outcome: 'steered', transport: 'synthetic', 'conversation.id': 'synthetic', 'queue.depth': 1 }),
+    event('gateway.admission', 95, { outcome: 'queued', transport: 'synthetic', 'conversation.id': 'synthetic', 'queue.depth': 2 }));
+  f.spans.push(span(traceA, '1000000000000009', '1000000000000001', 'gateway.session', 5, [], {
+    'conversation.turns': 0, 'conversation.bytes': 0, 'generation.digest': 'synthetic-generation',
+  }));
+  f.spans.push(span(traceB, '2000000000000009', '2000000000000001', 'gateway.session', 1005, [
+    event('gateway_recalled', 1006, { source: 'journal', messages: 1, delta: 0 }),
+    event('gateway_memory_projection', 1007, { 'memory.generation': 1, 'memory.record.ids': ['1'],
+      'memory.rung.summary': 1, 'memory.bytes': 17 }),
+  ], { 'conversation.turns': 1, 'conversation.bytes': 90, 'generation.digest': 'synthetic-generation' }));
+  f.spans.find(s => s.spanId === '2000000000000002')!.attributes = attributes({ 'prompt.max_steps': 4 });
+  f.spans.find(s => s.spanId === '2000000000000003')!.events = [
+    prompt(1, 'full', 3, [{ role: 'user', content: 'first with steer' },
+      { role: 'assistant', content: 'steered answer' }, { role: 'user', content: 'second' }], 1021),
+    event('accounting.model.turn', 1022, { 'model.turn': 1, outcome: 'succeeded' }),
+    event('agent.model.answer', 1023, { 'model.turn': 1, answer: 'second answer', tool_calls: '[]' }),
+  ];
+  return f;
+}

@@ -17,6 +17,7 @@ npm run typecheck
 npm test
 npm run build
 npm run check:dist
+npm run check:views
 ```
 
 TypeScript stays strict. The test suite includes the landing component and URL
@@ -73,3 +74,13 @@ The Node gates above are unchanged. The harness adds one daemon-free gate, run i
 ```sh
 python3.12 -m unittest discover -s harness/tests -v
 ```
+
+## Opened-bundle interaction gate
+
+`npm run check:views` uses the same pinned Playwright browser and built-page routing
+as `check:dist`. After bundled page assets load, it opens a handwritten synthetic
+bundle directory and drives forensic and context views. It asserts zero additional
+requests, including same-origin requests, as well as the stepping, aborted-step,
+summary-gap, source-omission and reduced-motion invariants. Run it after the build
+and `check:dist`; CI runs it before uploading `dist/`. Do not replace the pinned
+browser with a system browser.

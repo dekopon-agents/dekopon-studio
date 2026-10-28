@@ -79,7 +79,7 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
     attempt: (v, at) => metadata(v, at, { id: string, startedAt: string, finishedAt: nullable(string) }),
     providers: list((v, at) => metadata(v, at, { id: string, name: string, version: string, source, sha256: string })),
     collector: (v, at) => metadata(v, at, { image: string, exitCode: nullable(signed), forcedKill: boolean }),
-    seedDigest: nullable(string),
+    seedDigest: (v, at) => { if (v !== null) c.fail('manifest-shape', at); return null; },
   };
   for (const [key, decoder] of Object.entries(identityDecoders)) {
     const at = field(root, key);
@@ -98,10 +98,11 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
       gateway: (v, at) => metadata(v, at, { signal: string, drained: boolean, exitCode: signed }),
       copiedAt: string,
     }) as Record<string, import('./types').Json>;
+    const conversation = normalized.conversation as Record<string, import('./types').Json> | undefined;
     const gateway = normalized.gateway as Record<string, import('./types').Json> | undefined;
     freeze = gateway?.signal === 'SIGTERM' && gateway.drained === true && gateway.exitCode === '0' &&
       normalized.lastRepliedMessage !== undefined && normalized.copiedAt !== undefined &&
-      normalized.conversation !== undefined && normalized.journalStems !== undefined
+      conversation?.kind !== undefined && conversation.id !== undefined && normalized.journalStems !== undefined
       ? known(normalized) : c.unknown('freeze', field(root, 'freeze'));
   }
   let completeness: ChatRecord['completeness'];
@@ -163,7 +164,12 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
       } else await ref(o[name], at);
     }
   }
-  return { trace, logs, journals, record: { readerVersion: 1, bundleVersion: 1, dekoponVersion,
+  return { trace, logs, journals, record: { readerVersion: 2, bundleVersion: 1, dekoponVersion,
     references, identity, freeze, completeness, messages: [], unanchoredCalls: [], toolSets: [], journals: [],
-    summaryCalls: [], evidence: [], gaps: c.gaps, notes: c.notes } };
+    summaryCalls: [], evidence: [], spans: [], admissions: [], replays: [], mailbox: {
+      steers: c.unknown('mailbox-inventory-unavailable', { path: 'trace/traces.jsonl', field: 'steers' }),
+      followUps: c.unknown('mailbox-inventory-unavailable', { path: 'trace/traces.jsonl', field: 'follow-ups' }),
+      runningInterval: c.unknown('mailbox-state-unavailable', { path: 'trace/traces.jsonl', field: 'RUNNING interval' }),
+      completingInterval: c.unknown('mailbox-state-unavailable', { path: 'trace/traces.jsonl', field: 'COMPLETING interval' }),
+    }, gaps: c.gaps, notes: c.notes } };
 }

@@ -23,7 +23,7 @@ a typed error. Attachment inventory is constructed from allowed metadata fields.
 An asset's `source` is discarded, including its nested fields; it never appears
 in a returned record, note or error. Opaque reasoning bytes are omitted.
 
-## Record version 1
+## Record version 2
 
 The result carries `readerVersion`, the manifest's `bundleVersion`, the observed
 dekopon version, build/catalog/policy file references, freeze evidence,
@@ -94,3 +94,24 @@ invalid byte indexes are errors.
 
 The tests use one handwritten synthetic builder. No production exports or
 Python harness code are imported by this module.
+
+## Context evidence (record v2)
+
+Call attempts carry start/end times, a typed accounting outcome, and the exported
+session step cap. A steered/interrupted attempt is retained and does not consume
+a completed step. Missing outcomes and caps are gaps. Recognized spans retain
+parentage and filtered, validated attributes. Admission observations expose their
+recorded outcome, conversation and combined depth as facts; replay observations
+expose session exchange/byte totals and the configuration generation digest.
+These are distinct from `memory.generation` on projection/publication evidence.
+
+Coordinator ruling, 2026-10-28T22:00Z: v0.70.0 does not export mailbox drains or
+exact RUNNING/COMPLETING boundaries. The Studio shows admissions and combined
+depth, but queue inventories and those intervals stay explicitly unknown. Exact
+mailbox animation waits for a core export. Recorded permissions and a missing
+policy-world path belong to the later cedar part; successful same-request
+what-if evaluation also waits for a core export of the provider inventory.
+
+A freeze is known only with the required conversation kind and id as well as the
+existing drain evidence. Bundle v1 refuses a non-null `seedDigest` with a typed
+manifest error; a later external seed format does not change that contract.

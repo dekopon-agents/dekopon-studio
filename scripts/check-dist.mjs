@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 const deployedOrigin = 'https://dekopon-agents.github.io';
 const base = '/studio/';
 
-export async function checkDist(directory) {
+export async function checkDist(directory, drive) {
   directory = resolve(directory);
   const pages = [];
   async function visit(path) {
@@ -71,6 +71,7 @@ export async function checkDist(directory) {
           // Observe load-triggered fetches, preloads, and immediate refreshes until
           // Chromium has had no pending network requests for 500 ms.
           await page.waitForLoadState('networkidle', { timeout: 10000 });
+          if (drive) await drive({ page, context, file });
         } catch (error) {
           failures.add(`Loading ${path}: ${error.message}`);
         }
