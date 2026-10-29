@@ -23,7 +23,7 @@ a typed error. Attachment inventory is constructed from allowed metadata fields.
 An asset's `source` is discarded, including its nested fields; it never appears
 in a returned record, note or error. Opaque reasoning bytes are omitted.
 
-## Record version 2
+## Record version 3
 
 The result carries `readerVersion`, the manifest's `bundleVersion`, the observed
 dekopon version, build/catalog/policy file references, freeze evidence,
@@ -115,3 +115,17 @@ what-if evaluation also waits for a core export of the provider inventory.
 A freeze is known only with the required conversation kind and id as well as the
 existing drain evidence. Bundle v1 refuses a non-null `seedDigest` with a typed
 manifest error; a later external seed format does not change that contract.
+
+## Seed envelope (record v3)
+
+`exportSeed(files, continuationMessages)` verifies a snapshot through the bundle
+reader, requires a known freeze, and returns local download bytes and their
+SHA-256 `seedDigest`. It includes only the original manifest and present files
+named by validated references. `readSeed(bytes)` validates the versioned envelope,
+recovers the file map, delegates reconstruction to `readTrialBundle`, and returns
+the same record, ordered continuation messages and digest of the original bytes.
+Both resolve to typed errors for invalid input. The recovered file map is private
+export material, never a raw-file view. Unknown envelope fields become notes.
+See [SEED.md](../../harness/SEED.md) for the complete transport and digest contract;
+bundle v1 and its fixed-null `seedDigest` remain unchanged. Version 3 adds seed
+validation APIs and errors; existing record fields retain their meaning.

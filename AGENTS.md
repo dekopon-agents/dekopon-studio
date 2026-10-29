@@ -18,6 +18,7 @@ npm test
 npm run build
 npm run check:dist
 npm run check:views
+npm run check:seed
 ```
 
 TypeScript stays strict. The test suite includes the landing component and URL
@@ -84,3 +85,13 @@ requests, including same-origin requests, as well as the stepping, aborted-step,
 summary-gap, source-omission and reduced-motion invariants. Run it after the build
 and `check:dist`; CI runs it before uploading `dist/`. Do not replace the pinned
 browser with a system browser.
+
+## Seed interaction gate
+
+`npm run check:seed` opens a synthetic bundle in the built app, marks only its
+captured freeze, edits continuation messages, downloads a seed, and reopens it
+through the record reader. It checks freeze/continuation round-trip, null-freeze
+refusal and zero additional network requests, including same-origin requests.
+The local Blob download is the only way viewer bytes leave the app. CI runs this
+gate after `check:views` and before uploading `dist/`. The seed format is defined
+in [harness/SEED.md](harness/SEED.md); bundle v1 is unchanged.

@@ -6,6 +6,9 @@ export interface Bundle {
   record: ChatRecord; trace?: string; logs?: string; journals: string[];
 }
 const root = { path: 'manifest.json' };
+export function validBundlePath(path: string): boolean {
+  return !!path && !/[\\:\0]/.test(path) && !path.split('/').some(p => !p || p === '.' || p === '..');
+}
 export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context): Promise<Bundle> {
   const bytes = files.get(root.path);
   if (!bytes) c.fail('manifest-shape', root);
@@ -22,8 +25,7 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
     if (format && o.format !== 'otlp-jsonl') c.fail('manifest-shape', field(at, 'format'));
     if (o.path === null) { c.gap('missing-file', at); return; }
     const path = text(o.path, c, field(at, 'path'), 'manifest-shape');
-    if (!path || path.includes('\\') || path.includes(':') || path.includes('\0') ||
-      path.split('/').some(p => !p || p === '.' || p === '..')) c.fail('bundle-path', at);
+    if (!validBundlePath(path)) c.fail('bundle-path', at);
     const sha256 = text(o.sha256, c, field(at, 'sha256'), 'manifest-shape');
     if (!/^[a-f0-9]{64}$/.test(sha256)) c.fail('manifest-shape', field(at, 'sha256'));
     const size = integer(o.bytes, c, field(at, 'bytes'), 'manifest-shape');
@@ -164,7 +166,7 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
       } else await ref(o[name], at);
     }
   }
-  return { trace, logs, journals, record: { readerVersion: 2, bundleVersion: 1, dekoponVersion,
+  return { trace, logs, journals, record: { readerVersion: 3, bundleVersion: 1, dekoponVersion,
     references, identity, freeze, completeness, messages: [], unanchoredCalls: [], toolSets: [], journals: [],
     summaryCalls: [], evidence: [], spans: [], admissions: [], replays: [], mailbox: {
       steers: c.unknown('mailbox-inventory-unavailable', { path: 'trace/traces.jsonl', field: 'steers' }),
