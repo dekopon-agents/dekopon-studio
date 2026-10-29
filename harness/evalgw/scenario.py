@@ -236,7 +236,7 @@ def assemble(
                 **route,
             }
         ],
-        # gatewayd 0.62.0 requires sessions.assets.path whenever sessions.journal is set.
+        # Journal-backed sessions keep both stores inside the private runtime.
         "sessions": {
             **scenario["gateway"].get("sessions", {}),
             "journal": {"path": str(runtime / "journal")},

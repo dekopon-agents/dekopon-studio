@@ -13,7 +13,7 @@ BUNDLE_VERSION = 1
 MANIFEST = "manifest.json"
 SUBDIRECTORIES = ("trace", "journal", "config", "stdout")
 TRACE_FORMAT = "otlp-jsonl"
-JOURNAL_FORMAT = "dekopon-gatewayd-journal (internal, unversioned on disk; v2 at dekopon 0.62.0)"
+JOURNAL_FORMAT = "dekopon-gatewayd-journal (internal, unversioned on disk; v3 at dekopon 0.70.0)"
 
 
 def now() -> str:
@@ -86,7 +86,7 @@ class Bundle:
 
     def journal_files(self) -> list[dict[str, Any]]:
         base = self.root / "journal"
-        files = sorted(path for path in base.rglob("*") if path.is_file())
+        files = sorted(path for path in base.glob("*/*.jsonl") if path.is_file())
         return [self.ref(path.relative_to(self.root).as_posix()) for path in files]
 
     def finalize(

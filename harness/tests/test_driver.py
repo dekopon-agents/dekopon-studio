@@ -36,6 +36,32 @@ class StartupFailureTest(unittest.TestCase):
             self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
 
 
+class JournalCopyTest(unittest.TestCase):
+    def test_only_conversation_journals_enter_the_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            journal = runtime / "journal" / "evalgw-agent"
+            journal.mkdir(parents=True)
+            original = b'{"synthetic":true}\n'
+            (journal / "conversation.jsonl").write_bytes(original)
+            (journal.parent / "prompt-cache-key.secret").write_text("synthetic non-journal state")
+            (journal / "conversation.sealed").write_text("synthetic marker")
+            attempt = Bundle.create(root / "attempt", "synthetic", "two-message-gh-recall")
+            driver.copy_journal(runtime, attempt)
+            copied = attempt.path("journal/evalgw-agent/conversation.jsonl")
+            self.assertEqual(copied.read_bytes(), original)
+            self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(copied.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual([p.relative_to(attempt.path("journal")).as_posix()
+                              for p in attempt.path("journal").rglob("*") if p.is_file()],
+                             ["evalgw-agent/conversation.jsonl"])
+            # Manifest enumeration also excludes non-transcript siblings without reading them.
+            attempt.path("journal/non-journal-state").write_text("synthetic unrelated state")
+            self.assertEqual([ref["path"] for ref in attempt.journal_files()],
+                             ["journal/evalgw-agent/conversation.jsonl"])
+
+
 class EvidenceReuseTest(unittest.TestCase):
     def test_finalization_parses_the_exports_once(self):
         with tempfile.TemporaryDirectory() as directory:

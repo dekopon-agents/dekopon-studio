@@ -104,7 +104,14 @@ def converse(path: Path, scenario: dict[str, Any], record: list[dict[str, Any]])
 
 def copy_journal(runtime: Path, bundle: Bundle) -> str:
     """Verbatim copy of the gateway journal, taken only once the gateway has exited."""
-    shutil.copytree(runtime / "journal", bundle.path("journal"), dirs_exist_ok=True)
+    # The journal root also holds private runtime state (including the prompt-cache key).
+    # Bundle v1 carries only conversation transcripts, never those sibling files.
+    for source in (runtime / "journal").glob("*/*.jsonl"):
+        if source.is_file():
+            destination = bundle.path("journal/" + source.relative_to(runtime / "journal").as_posix())
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            os.chmod(destination, 0o600)
     return now()
 
 

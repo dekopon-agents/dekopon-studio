@@ -13,8 +13,8 @@ from typing import Any
 from .bundle import sha256
 
 USER_AGENT = "dekopon-coordinator (campaign-trail)"
-DEKOPON_VERSION = "0.62.0"
-DEKOPON_COMMIT = "916796e0d65ef05b488d8aa64fe62899f31d3739"
+DEKOPON_VERSION = "0.70.0"
+DEKOPON_COMMIT = "2e0a398620c6ceaf77b0b0cd3353d1d9fa66c0fc"
 DAEMONS = ("dekopon-gatewayd", "dekopon-brokerd")
 # The Collector writes OTLP JSON with its `file` exporter; the daemons send OTLP/HTTP protobuf.
 COLLECTOR_IMAGE = (
@@ -39,7 +39,7 @@ DEKOPON = Pinned(
         "https://github.com/dekopon-agents/dekopon/releases/download/"
         f"v{DEKOPON_VERSION}/dekopon-{DEKOPON_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
     ),
-    sha256="5d70317ccdb60f7ea472152c543c1813ae1697686a401f6e856b8417d5bf7dc8",
+    sha256="09e052b3fe0ba5d831dfbbb011152a3f2e8a4984b97fe54e03902fd6a324861a",
     source={"repository": "dekopon-agents/dekopon", "commit": DEKOPON_COMMIT},
 )
 PROVIDERS = {
