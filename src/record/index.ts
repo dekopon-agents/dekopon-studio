@@ -3,6 +3,7 @@ import { Context, Failure } from './json';
 import { journal } from './journal';
 import { otlp } from './otlp';
 import { reconstruct } from './reconstruct';
+import { permissions } from './permissions';
 import type { ReadResult } from './types';
 
 export type * from './types';
@@ -27,6 +28,7 @@ export async function readTrialBundle(files: ReadonlyMap<string, Uint8Array>): P
       for (const record of journal(snapshot.get(path)!, path, c)) b.record.journals.push(record);
     }
     reconstruct(b.record, exported, c);
+    permissions(b.record, c);
     return { ok: true, record: b.record };
   } catch (error) {
     return { ok: false, errors: [error instanceof Failure ? error.error : { kind: 'reader-failure', at: { path: 'manifest.json' } }], notes: c.notes };

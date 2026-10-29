@@ -1,6 +1,7 @@
 import { array, canonical, Context, decimal, field, json, known, object, parse, text, wellFormed } from './json';
 import type { ObjectValue, Value } from './json';
 import type { Event, Export, Span } from './otlp';
+import { permissionAttributes, validatePermissionAttributes } from './permissions';
 import type { CallOutcome, ChatMessage, ChatRecord, EvidenceRecord, Fact, Json, Location, ModelCall, SpanKey, ToolExchange } from './types';
 
 const settings = ['model.name', 'model', 'model.backend', 'model.dialect', 'model.stream', 'cache.style',
@@ -13,9 +14,9 @@ const names = new Set(['agent.model.prompt', 'agent.model.answer', 'agent.tool.s
   'gateway_memory_summary_transition', 'gateway_memory_summary_dropped', 'gateway_memory_pin_dropped',
   'gateway_memory_policy', 'gateway_memory_notice', 'gateway_journal_expired', 'gateway_journal_append_failed',
   'gateway_memory_record_failed', 'gateway_memory_retention_failed', 'accounting.model.turn',
-  'gateway.message.received', 'reply.delivered', 'broker.execution', 'gateway.admission',
+  'gateway.message.received', 'reply.delivered', 'broker.execution', 'broker.decision', 'gateway.admission',
   'gateway.progress', 'gateway_recalled', 'gateway_recall_failed']);
-const attributes = new Set([...settings, 'audit.event', 'event', 'model.turn', 'message.count', 'transcript.scope',
+const attributes = new Set([...settings, ...permissionAttributes, 'audit.event', 'event', 'model.turn', 'message.count', 'transcript.scope',
   'transcript.segment', 'transcript.segments', 'messages', 'gen_ai.tool.definitions', 'answer', 'tool_calls',
   'stream.interrupted', 'gen_ai.tool.call.id', 'script', 'output', 'memory.record.id', 'memory.generation',
   'memory.record.bytes', 'memory.record.items', 'memory.slots.queued', 'memory.summary.part', 'memory.summary.from',
@@ -40,7 +41,8 @@ const incidental = (key: string) => ['level', 'target', 'name', 'message'].inclu
 const id = (key: SpanKey) => key.traceId + '/' + key.spanId;
 const compare = (a: string, b: string) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0;
 function publicEvent(e: Event): EvidenceRecord {
-  return { ...e, attributes: Object.fromEntries(Object.entries(e.attributes)
+  return { key: e.key, at: e.at, name: e.name, time: e.time, origin: e.origin,
+    attributes: Object.fromEntries(Object.entries(e.attributes)
     .filter(([key]) => attributes.has(key)).map(([key, value]) => [key, json(value)])) };
 }
 function eventIdentity(e: Event) {
@@ -82,7 +84,7 @@ function bounded(o: ObjectValue, key: string, c: Context, at: Location, required
   }
   return true;
 }
-function validate(e: Event, c: Context): boolean {
+function validate(e: Pick<Event, 'name' | 'attributes' | 'at'>, c: Context): boolean {
   let final = false;
   if (e.name === 'agent.model.answer') {
     const answer = bounded(e.attributes, 'answer', c, e.at, false);
@@ -152,6 +154,9 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
     }
     return false;
   }
+  // Validate every recognized occurrence before a log copy can be suppressed.
+  for (const e of exported.events) if (names.has(e.name))
+    validatePermissionAttributes(e.attributes, e.attributeTypes, e.at, c);
   const events = withoutLogCopies(exported.events), recognized: Event[] = [];
   const finals = new Map<string, Event>();
   for (const e of events) {
@@ -166,10 +171,12 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
   for (const s of exported.spans) {
     if (!spans.has(s.name)) c.note('unknown-span', s.at, s.name);
     else {
+      validatePermissionAttributes(s.attributes, s.attributeTypes, s.at, c);
       const contextAttributes = Object.fromEntries(Object.entries(s.attributes).filter(([name]) =>
         ['conversation.turns', 'conversation.bytes', 'generation.digest', 'prompt.max_steps', 'prompt.max_capability_calls'].includes(name)));
-      validate({ key: s.key, at: s.at, name: s.name, time: s.start, origin: 'span', attributes: contextAttributes }, c);
-      record.spans.push({ ...s, attributes: publicEvent({ ...s, time: s.start, origin: 'span' }).attributes });
+      validate({ at: s.at, name: s.name, attributes: contextAttributes }, c);
+      record.spans.push({ key: s.key, at: s.at, parent: s.parent, name: s.name, start: s.start, end: s.end,
+        attributes: publicEvent({ ...s, time: s.start, origin: 'span' }).attributes });
       if (s.name === 'gateway.session') record.replays.push({ key: s.key, time: s.start,
         priorTurns: evidenceFact(s.attributes, 'conversation.turns', s.at, c),
         priorBytes: evidenceFact(s.attributes, 'conversation.bytes', s.at, c),
@@ -201,7 +208,7 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
   for (const e of recognized) if (['agent.model.prompt', 'agent.model.answer'].includes(e.name) &&
     !index.has(id(e.key)) && !missingOwners.has(id(e.key))) {
     missingOwners.add(id(e.key));
-    turns.push({ key: e.key, at: e.at, parent: '', name: 'prompt.model_turn', start: e.time, end: e.time, attributes: {} });
+    turns.push({ key: e.key, at: e.at, parent: '', name: 'prompt.model_turn', start: e.time, end: e.time, attributes: {}, attributeTypes: {} });
   }
   turns.sort((a, b) => compare(a.start, b.start));
   for (const span of turns) {

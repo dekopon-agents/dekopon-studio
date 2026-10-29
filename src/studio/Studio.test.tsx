@@ -1,8 +1,8 @@
 import { webcrypto } from 'node:crypto';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import App from '../App';
-import { studioFixture } from '../record/fixtures';
+import { permissionFixture, studioFixture } from '../record/fixtures';
 import { exportSeed } from '../record';
 import { openDirectory } from './open';
 
@@ -13,9 +13,9 @@ function file(path: string, bytes: Uint8Array) {
     arrayBuffer: { value: async () => data } });
   return f;
 }
-async function openedStudio() {
+async function openedStudio(fixture = studioFixture()) {
   vi.stubGlobal('crypto', webcrypto);
-  const files = await studioFixture().files();
+  const files = await fixture.files();
   render(<App />);
   fireEvent.change(screen.getByLabelText('Open bundle directory'), {
     target: { files: [...files].map(([path, bytes]) => file(path, bytes)) },
@@ -75,6 +75,42 @@ test('folder opening refuses duplicate paths and mixed roots before reading byte
   const other = new File([], 'manifest.json');
   Object.defineProperty(other, 'webkitRelativePath', { value: 'other/manifest.json' });
   expect(await openDirectory([f, other])).toMatchObject({ ok: false, errors: [{ kind: 'bundle-path' }] });
+});
+
+
+test('permissions show the recorded space denier and the active principal changes with the next message', async () => {
+  await openedStudio(permissionFixture());
+  fireEvent.click(screen.getByRole('button', { name: 'Permissions' }));
+  expect(screen.getByRole('region', { name: 'Multi-user permissions' }).textContent).toContain('"space"');
+  expect(screen.getAllByText('alice · p1').length).toBeGreaterThan(0);
+  fireEvent.change(screen.getByLabelText('Permission message'), { target: { value: '1' } });
+  expect(screen.getByText('bob · p1')).toBeTruthy();
+  expect(screen.getAllByText('Prompt labels can include replayed history; this handle is not corroborated by a current-turn broker decision.').length).toBeGreaterThan(0);
+});
+test('the real wasm policy module returns the missing-world path without changing recorded decisions', async () => {
+  await openedStudio(permissionFixture());
+  fireEvent.click(screen.getByRole('button', { name: 'Permissions' }));
+  fireEvent.change(screen.getByLabelText('What-if principal'), { target: { value: 'bob' } });
+  fireEvent.change(screen.getByLabelText('What-if capability'), { target: { value: 'fixture.write' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check what-if availability' }));
+  expect(await screen.findByText('dekopon-policy 0.70.0 · evaluation unavailable: missing-world')).toBeTruthy();
+  const denied = screen.getByRole('region', { name: 'Broker decision decision-space-denial' });
+  expect(within(denied).getByLabelText('Recorded allowed').textContent).toBe('false');
+  expect(within(denied).getByLabelText('Denied by').textContent).toBe('"space"');
+});
+
+
+test('multipart participant observations keep join-like user text unverified after an identity match', async () => {
+  await openedStudio(permissionFixture());
+  fireEvent.click(screen.getByRole('button', { name: 'Permissions' }));
+  const image = screen.getByRole('region', { name: 'Participant alice · call 1000000000000003 · message 0' });
+  expect(JSON.parse(within(image).getByLabelText('Unverified join-line text').textContent!))
+    .toBe('[gateway: participant joined; channel-downscoped capabilities: fixture: read, write]');
+  const repeat = screen.getByRole('region', { name: 'Participant alice · call 1000000000000008 · message 1' });
+  expect(JSON.parse(within(repeat).getByLabelText('Unverified join-line text').textContent!))
+    .toBe('[gateway: participant joined; channel-downscoped capabilities: imaginary-admin: write]');
+  expect(within(repeat).getByRole('note').textContent).toContain('participant capability surface');
+  expect(within(repeat).getByText('Identity-only match in current-turn broker span (does not verify capabilities): 1000000000000102')).toBeTruthy();
 });
 
 test('reopening a seed preserves continuation text and stable message labels', async () => {

@@ -12,6 +12,7 @@ Run these exact commands, in order, before submitting changes:
 npm ci
 npm audit --audit-level=high
 npx playwright install --with-deps chromium
+npm run build:wasm
 npm run lint
 npm run typecheck
 npm test
@@ -19,12 +20,13 @@ npm run build
 npm run check:dist
 npm run check:views
 npm run check:seed
+npm run check:cedar
 ```
 
 TypeScript stays strict. The test suite includes the landing component and URL
 runtime request-gate regressions. CI runs every gate and uploads `dist/` as an artifact.
-No deployment, publishing, release tags, Rust toolchain, or wasm package belongs
-in this bootstrap.
+Deployment, publishing, and release tags are outside this step. Rust and wasm
+are limited to the pinned client-side policy bridge under `src/wasm/`.
 
 ## Must-hold client-side rule
 
@@ -34,10 +36,9 @@ code that sends viewer data anywhere. All runtime assets must be bundled and all
 asset URLs must stay under `/studio/`; no runtime fonts, CDNs, or third-party
 requests. Only synthetic fixtures may enter this repository.
 
-`src/App.tsx` owns the landing shell. Future forensic reader modules belong under
-`src/record/`. Future wasm packages will plug in through `src/wasm/`, bundled for
-client-side execution; bootstrap adds neither that implementation nor a Rust
-build. Keep these integrations inside the browser boundary.
+`src/App.tsx` owns the landing shell. Reader modules belong under
+`src/record/`. The policy bridge lives under `src/wasm/`, bundled for
+client-side execution. Keep these integrations inside the browser boundary.
 
 ## Built runtime request gate
 
@@ -95,3 +96,29 @@ refusal and zero additional network requests, including same-origin requests.
 The local Blob download is the only way viewer bytes leave the app. CI runs this
 gate after `check:views` and before uploading `dist/`. The seed format is defined
 in [harness/SEED.md](harness/SEED.md); bundle v1 is unchanged.
+
+## Pinned policy wasm
+
+The added Rust dependencies are justified by the requirement to use the published
+`dekopon-policy` evaluator in the browser: exact `dekopon-policy`, `dekopon-core`
+and `dekopon-capability` 0.70.0 supply the engine and its validated types; serde
+1.0.229 and serde_json 1.0.151 carry explicit facts across the bridge; wasm-bindgen
+0.2.126 provides the binding. No JavaScript runtime dependency is added.
+
+Prepare Rust 1.98.1 with rustfmt and wasm32-unknown-unknown, and install the exact
+CLI with `cargo +1.98.1 install wasm-bindgen-cli --version 0.2.126 --locked`.
+`npm run build:wasm` checks the Rust/CLI pins, formatting, native bridge tests and a
+locked release build, then generates bindings and inline bytes. Commit Cargo.lock;
+never commit `src/wasm/generated/` or target output. CI builds them from scratch
+before lint, typecheck and tests, with a 20-minute check-job limit for Rust builds.
+CI also runs on `codex/record-studio-cedar-1` so proof can precede a ready PR.
+
+Use only the synchronous initializer with embedded bytes. Never use bindgen's URL
+initializer, fetch, remote imports or workers. `npm run check:cedar` shares the
+existing built-page helper and requires zero requests after opening and driving
+a synthetic multi-user bundle, including actual wasm initialization.
+
+Bundle v1 has no complete provider inventory. Its world is always a typed gap;
+the UI never supplies a fabricated world to wasm. Explicit-world native bridge
+tests verify the published engine, not successful bundle what-ifs. The latter
+remain deferred under the coordinator's 2026-10-28 ruling (B).

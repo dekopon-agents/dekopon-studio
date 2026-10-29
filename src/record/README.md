@@ -23,7 +23,7 @@ a typed error. Attachment inventory is constructed from allowed metadata fields.
 An asset's `source` is discarded, including its nested fields; it never appears
 in a returned record, note or error. Opaque reasoning bytes are omitted.
 
-## Record version 3
+## Record version 4
 
 The result carries `readerVersion`, the manifest's `bundleVersion`, the observed
 dekopon version, build/catalog/policy file references, freeze evidence,
@@ -108,9 +108,8 @@ These are distinct from `memory.generation` on projection/publication evidence.
 Coordinator ruling, 2026-10-28T22:00Z: v0.70.0 does not export mailbox drains or
 exact RUNNING/COMPLETING boundaries. The Studio shows admissions and combined
 depth, but queue inventories and those intervals stay explicitly unknown. Exact
-mailbox animation waits for a core export. Recorded permissions and a missing
-policy-world path belong to the later cedar part; successful same-request
-what-if evaluation also waits for a core export of the provider inventory.
+mailbox animation waits for a core export. Successful same-request what-if
+evaluation also waits for a core export of the provider inventory.
 
 A freeze is known only with the required conversation kind and id as well as the
 existing drain evidence. Bundle v1 refuses a non-null `seedDigest` with a typed
@@ -129,3 +128,37 @@ export material, never a raw-file view. Unknown envelope fields become notes.
 See [SEED.md](../../harness/SEED.md) for the complete transport and digest contract;
 bundle v1 and its fixed-null `seedDigest` remain unchanged. Version 3 adds seed
 validation APIs and errors; existing record fields retain their meaning.
+
+## Recorded permissions (record v4)
+
+Version 4 adds recorded permission evidence and the missing-world path on top of
+the version 3 seed APIs.
+
+`permissions` carries validated `broker.decision` and `broker.execution` evidence,
+authenticated receipt subjects, and the active principal when a unique broker
+attribution matches the receipt subject in the same trace. It preserves asker and
+space verdicts and the exported denier. A refusal before Cedar remains incomplete;
+absent fields are facts with typed gaps, not default verdicts.
+
+Effects join only on trace, invocation id and decision id. Every matching decision
+occurrence remains available, including multiple records on one span. No temporal
+or capability-only join is used. Unanchored evidence remains in the global lists.
+
+Participant observations decode plain strings and multipart arrays of strings,
+using only the initial text part for the prefix. Unsupported user-content forms
+produce a typed evidence gap. An immediately following join-like line is retained
+as unverified transcript text with call/message provenance; subsequent user text
+can impersonate that line. The capability surface always carries a typed gap. A
+current-turn principal/handle broker match corroborates identity only, never the
+claimed capabilities. Replayed handles and unmatched identities stay unverified.
+Permission validation requires OTLP `stringValue` for string attributes and
+`boolValue` for booleans. The decoder retains each wire discriminator internally
+until validation, before log-copy suppression and JSON normalization; binary and
+integer identifiers cannot become string facts or join string identifiers. This
+internal metadata is discarded at the public record boundary.
+
+The policy text is decoded only from the manifest's integrity-checked reference.
+Bundle v1 cannot establish a full policy world, so `policy-world-unavailable`
+is always visible. The UI uses no config path as a reference and fetches nothing.
+This follows coordinator ruling (B); successful bundle what-ifs wait for a core
+provider-inventory export. Bundle v1, summary gaps and source omission are unchanged.

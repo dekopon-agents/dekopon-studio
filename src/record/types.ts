@@ -10,7 +10,8 @@ type GapKind =
   | 'ambiguous-record-join' | 'selection-reason' | 'unknown-setting'
   | 'opaque-content' | 'image-bytes' | 'evicted-record' | 'append-failure'
   | 'decider-probability' | 'call-outcome' | 'step-cap' | 'mailbox-inventory-unavailable'
-  | 'mailbox-state-unavailable';
+  | 'mailbox-state-unavailable' | 'permission-evidence' | 'permission-attribution'
+  | 'policy-world-unavailable';
 export type Gap =
   | { kind: GapKind; at: Location; attribute?: string; traceId?: string; spanId?: string;
       recordId?: string; part?: string; detail?: string }
@@ -107,12 +108,36 @@ export interface SummaryCall {
   recordCandidates: JournalKey[]; transitions: EvidenceRecord[];
   settings: Record<string, Fact<Json>>; completionSpans: SpanKey[];
 }
+export interface BrokerDecision {
+  evidence: EvidenceRecord; id: Fact<string>; invocation: Fact<string>; capability: Fact<string>;
+  principal: Fact<string>; subject: Fact<string>; participant: Fact<string>;
+  allowed: Fact<boolean>; space: Fact<string>; askerAllowed: Fact<boolean>; spaceAllowed: Fact<boolean>;
+  deniedBy: Fact<'asker' | 'space' | 'both' | null>;
+}
+export interface BrokerEffect {
+  evidence: EvidenceRecord; id: Fact<string>; invocation: Fact<string>;
+  decisions: Fact<BrokerDecision[]>;
+}
+export interface ParticipantObservation {
+  principal: string; handle: string | null; surface: Fact<string>; call: SpanKey; messageIndex: number;
+  observedJoinLine: string | null; identityAttestation: Fact<SpanKey>;
+}
+export interface PermissionTurn {
+  traceId: string; ordinal: number; receipts: { evidence: EvidenceRecord; subject: Fact<string> }[];
+  principal: Fact<string>; participants: ParticipantObservation[];
+  decisions: BrokerDecision[]; effects: BrokerEffect[];
+}
+export interface PermissionRecord {
+  policy: Fact<string>; world: { state: 'unknown'; gap: Gap };
+  decisions: BrokerDecision[]; effects: BrokerEffect[]; turns: PermissionTurn[];
+}
 export interface ChatRecord {
-  readerVersion: 3; bundleVersion: 1; dekoponVersion: Fact<string>;
+  readerVersion: 4; bundleVersion: 1; dekoponVersion: Fact<string>;
   references: FileReference[]; identity: { [key: string]: Json };
   freeze: Fact<Json>; completeness: Fact<Json>;
   messages: ChatMessage[]; unanchoredCalls: ModelCall[]; toolSets: ToolSet[]; journals: JournalRecord[];
   summaryCalls: SummaryCall[]; evidence: EvidenceRecord[]; spans: RecordSpan[]; admissions: Admission[]; replays: ReplayObservation[]; mailbox: MailboxGaps;
+  permissions: PermissionRecord;
   gaps: Gap[]; notes: Note[];
 }
 export type ReadResult = { ok: true; record: ChatRecord }

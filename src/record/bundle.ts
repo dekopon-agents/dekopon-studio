@@ -166,12 +166,19 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
       } else await ref(o[name], at);
     }
   }
-  return { trace, logs, journals, record: { readerVersion: 3, bundleVersion: 1, dekoponVersion,
+  const policyRef = references.find(ref => ref.at.field === 'config.policies');
+  const policyBytes = policyRef && files.get(policyRef.path);
+  const policy = policyBytes ? known(decode(policyBytes, c, { path: policyRef!.path }))
+    : c.unknown<string>('permission-evidence', { path: 'manifest.json', field: 'config.policies' });
+  return { trace, logs, journals, record: { readerVersion: 4, bundleVersion: 1, dekoponVersion,
     references, identity, freeze, completeness, messages: [], unanchoredCalls: [], toolSets: [], journals: [],
     summaryCalls: [], evidence: [], spans: [], admissions: [], replays: [], mailbox: {
       steers: c.unknown('mailbox-inventory-unavailable', { path: 'trace/traces.jsonl', field: 'steers' }),
       followUps: c.unknown('mailbox-inventory-unavailable', { path: 'trace/traces.jsonl', field: 'follow-ups' }),
       runningInterval: c.unknown('mailbox-state-unavailable', { path: 'trace/traces.jsonl', field: 'RUNNING interval' }),
       completingInterval: c.unknown('mailbox-state-unavailable', { path: 'trace/traces.jsonl', field: 'COMPLETING interval' }),
-    }, gaps: c.gaps, notes: c.notes } };
+    }, permissions: { policy, world: { state: 'unknown', gap: c.gap('policy-world-unavailable',
+      { path: 'manifest.json', field: 'providers' }, { attribute: 'provider-inventory',
+        detail: 'Bundle v1 has provider pins and runtime paths, not the complete loaded capability inventory. Successful what-if evaluation waits for a core export.' }) },
+      decisions: [], effects: [], turns: [] }, gaps: c.gaps, notes: c.notes } };
 }

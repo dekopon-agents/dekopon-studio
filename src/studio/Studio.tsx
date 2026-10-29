@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ChatRecord, ModelCall, ReplayObservation, SummaryCall } from '../record';
 import { FactView, GapView, JsonView, location } from './Facts';
+import Permissions from './Permissions';
 import { budget, difference, eventTitles, key, steps } from './model';
 
 function CallView({ call, record }: { call: ModelCall; record: ChatRecord }) {
@@ -104,7 +105,7 @@ function FrozenJournal({ record }: { record: ChatRecord }) {
 export default function Studio({ record }: { record: ChatRecord }) {
   const observations = steps(record);
   const [cursor, setCursor] = useState(() => Math.max(0, observations.findIndex(step => step.call)));
-  const [mode, setMode] = useState<'forensic' | 'context'>('forensic');
+  const [mode, setMode] = useState<'forensic' | 'context' | 'permissions'>('forensic');
   const selected = observations[cursor];
   return <>
     <section className="record-heading"><h2>Opened bundle</h2>
@@ -117,7 +118,9 @@ export default function Studio({ record }: { record: ChatRecord }) {
     <nav className="mode-switch" aria-label="Studio views">
       <button aria-pressed={mode === 'forensic'} onClick={() => setMode('forensic')}>Forensic view</button>
       <button aria-pressed={mode === 'context'} onClick={() => setMode('context')}>Context view</button>
+      <button aria-pressed={mode === 'permissions'} onClick={() => setMode('permissions')}>Permissions</button>
     </nav>
+    {mode === 'permissions' ? <Permissions record={record} /> : <>
     <div className="studio-layout">
       <nav className="panel observations" aria-label="Recorded observations"><h2>{mode === 'forensic' ? 'Messages and model calls' : 'Turn timeline'}</h2>
         {mode === 'forensic' ? <>
@@ -152,6 +155,7 @@ export default function Studio({ record }: { record: ChatRecord }) {
       {!record.summaryCalls.length && <p>No summary tasks exported.</p>}
       {record.summaryCalls.map(summary => <details key={key(summary.key)}><summary>Summary observation · {summary.key.spanId}</summary><SummaryView summary={summary} /></details>)}
     </section>
+    </>}
     <section className="panel"><h2>Gaps and unknown evidence</h2>
       {record.gaps.map((gap, i) => <GapView key={i} gap={gap} />)}
       <details><summary>Notes for unknown fields and events ({record.notes.length})</summary><JsonView value={record.notes} /></details>
