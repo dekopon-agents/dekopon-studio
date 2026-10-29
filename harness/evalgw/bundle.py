@@ -86,7 +86,7 @@ class Bundle:
 
     def journal_files(self) -> list[dict[str, Any]]:
         base = self.root / "journal"
-        files = sorted(path for path in base.rglob("*") if path.is_file())
+        files = sorted(path for path in base.glob("*/*.jsonl") if path.is_file())
         return [self.ref(path.relative_to(self.root).as_posix()) for path in files]
 
     def finalize(

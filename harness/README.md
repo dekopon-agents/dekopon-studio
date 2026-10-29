@@ -55,7 +55,8 @@ the final prompt and system prompts never satisfy it.
 The two-message scenario explicitly sets `hotTurns: 10`, `summaries: "off"` and
 `selection: "ladder"`. Disabling new summary generation keeps its scripted completions limited to
 the two main-loop turns. Journals use the internal v3 format the Studio reader already reads;
-ordinary trials still use bundle v1 and its fixed-null `seedDigest`.
+ordinary trials still use bundle v1 and its fixed-null `seedDigest`. Capture copies only conversation
+`.jsonl` files; private cache-key state and side markers never enter a bundle.
 
 The acceptance scenario, `scenarios/two-message.json`, makes one authorized `gh repo view` read
 through brokerd against the synthetic service, then asks the agent to recall that fact on a

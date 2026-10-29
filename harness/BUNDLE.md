@@ -44,6 +44,9 @@ holds no absolute host path and no URL a reader must fetch. An absent file is `n
 | `gaps` | strings naming evidence this bundle does not carry |
 | `seedDigest` | always `null` in version 1 |
 
+Only conversation `journal/<agent>/<stem>.jsonl` files are copied and referenced. Private runtime
+state such as the prompt-cache key and journal side markers are excluded without reading them.
+
 Config copies are what the daemons read, verbatim, so they name the attempt's private runtime paths
 (sockets, journal directory). Those are evidence, not references.
 
