@@ -130,6 +130,7 @@ def wait_summaries(runtime: Path, records: int, prior_turns: set[str]) -> None:
 
 
 def run(scenario_path: Path | None, output: Path, cache: Path, *, restored: Any = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    cache = cache.resolve()
     scenario = restored.scenario if restored is not None else scenarios.load(scenario_path)
     attempt = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
     bundle = Bundle.create(output, attempt, scenario["id"],
