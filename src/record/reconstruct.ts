@@ -1,6 +1,7 @@
 import { array, canonical, Context, decimal, field, json, known, object, parse, text, wellFormed } from './json';
 import type { ObjectValue, Value } from './json';
 import type { Event, Export, Span } from './otlp';
+import { permissionAttributes } from './permissions';
 import type { CallOutcome, ChatMessage, ChatRecord, EvidenceRecord, Fact, Json, Location, ModelCall, SpanKey, ToolExchange } from './types';
 
 const settings = ['model.name', 'model', 'model.backend', 'model.dialect', 'model.stream', 'cache.style',
@@ -13,9 +14,9 @@ const names = new Set(['agent.model.prompt', 'agent.model.answer', 'agent.tool.s
   'gateway_memory_summary_transition', 'gateway_memory_summary_dropped', 'gateway_memory_pin_dropped',
   'gateway_memory_policy', 'gateway_memory_notice', 'gateway_journal_expired', 'gateway_journal_append_failed',
   'gateway_memory_record_failed', 'gateway_memory_retention_failed', 'accounting.model.turn',
-  'gateway.message.received', 'reply.delivered', 'broker.execution', 'gateway.admission',
+  'gateway.message.received', 'reply.delivered', 'broker.execution', 'broker.decision', 'gateway.admission',
   'gateway.progress', 'gateway_recalled', 'gateway_recall_failed']);
-const attributes = new Set([...settings, 'audit.event', 'event', 'model.turn', 'message.count', 'transcript.scope',
+const attributes = new Set([...settings, ...permissionAttributes, 'audit.event', 'event', 'model.turn', 'message.count', 'transcript.scope',
   'transcript.segment', 'transcript.segments', 'messages', 'gen_ai.tool.definitions', 'answer', 'tool_calls',
   'stream.interrupted', 'gen_ai.tool.call.id', 'script', 'output', 'memory.record.id', 'memory.generation',
   'memory.record.bytes', 'memory.record.items', 'memory.slots.queued', 'memory.summary.part', 'memory.summary.from',

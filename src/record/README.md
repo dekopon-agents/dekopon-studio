@@ -23,7 +23,7 @@ a typed error. Attachment inventory is constructed from allowed metadata fields.
 An asset's `source` is discarded, including its nested fields; it never appears
 in a returned record, note or error. Opaque reasoning bytes are omitted.
 
-## Record version 2
+## Record version 3
 
 The result carries `readerVersion`, the manifest's `bundleVersion`, the observed
 dekopon version, build/catalog/policy file references, freeze evidence,
@@ -115,3 +115,28 @@ what-if evaluation also waits for a core export of the provider inventory.
 A freeze is known only with the required conversation kind and id as well as the
 existing drain evidence. Bundle v1 refuses a non-null `seedDigest` with a typed
 manifest error; a later external seed format does not change that contract.
+
+## Recorded permissions (record v3)
+
+`permissions` carries validated `broker.decision` and `broker.execution` evidence,
+authenticated receipt subjects, and the active principal when a unique broker
+attribution matches the receipt subject in the same trace. It preserves asker and
+space verdicts and the exported denier. A refusal before Cedar remains incomplete;
+absent fields are facts with typed gaps, not default verdicts.
+
+Effects join only on trace, invocation id and decision id. Every matching decision
+occurrence remains available, including multiple records on one span. No temporal
+or capability-only join is used. Unanchored evidence remains in the global lists.
+
+Participant surfaces are extracted only from the first gateway-authored user
+prefix and immediately following join line in reconstructed inputs. They are
+labeled as recorded transcript observations, with call/message provenance. A
+current-turn principal/handle broker match is required for corroboration; replayed
+handles and unmatched labels stay unverified. These lines summarize downscoped
+read/write surfaces; they are never treated as a provider inventory or new grant.
+
+The policy text is decoded only from the manifest's integrity-checked reference.
+Bundle v1 cannot establish a full policy world, so `policy-world-unavailable`
+is always visible. The UI uses no config path as a reference and fetches nothing.
+This follows coordinator ruling (B); successful bundle what-ifs wait for a core
+provider-inventory export. Bundle v1, summary gaps and source omission are unchanged.

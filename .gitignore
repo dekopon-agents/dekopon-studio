@@ -4,3 +4,6 @@ coverage/
 *.local
 harness/.cache/
 __pycache__/
+
+src/wasm/policy/target/
+src/wasm/generated/

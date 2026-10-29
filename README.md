@@ -17,6 +17,9 @@ Use Node 24.19.0 (`nvm use`, if you use nvm) and npm 11.9.0.
 ```sh
 npm ci
 npx playwright install --with-deps chromium
+rustup toolchain install 1.98.1 --profile minimal --component rustfmt --target wasm32-unknown-unknown
+cargo +1.98.1 install wasm-bindgen-cli --version 0.2.126 --locked
+npm run build:wasm
 npm run dev
 ```
 
@@ -24,7 +27,8 @@ Open the local URL printed by Vite at `/studio/`. Run the gates in [AGENTS.md](A
 before proposing changes. `npm run build` writes the static app to `dist/` with
 asset paths under `/studio/`; `npm run check:dist` checks requests while Chromium loads every built HTML page.
 `npm run check:views` opens a synthetic bundle in that build and checks views with
-zero additional network requests.
+zero additional network requests. `npm run check:cedar` drives the permissions
+view and initializes the policy wasm with the same zero-request requirement.
 
 ## Opening a bundle
 
@@ -40,7 +44,9 @@ the cursor. Reduced-motion preferences disable step animation.
 At Dekopon v0.70.0, admissions export combined mailbox depth but not queue
 inventories or exact RUNNING/COMPLETING intervals. Those remain explicitly unknown.
 Summary-engine inputs also remain unavailable; summary transitions and observed
-text are shown. Policy evaluation and seed export are later parts.
+text are shown. The Permissions view shows recorded principals, participant surfaces and broker
+decisions. Its what-if panel reports the missing provider inventory; successful
+bundle evaluation awaits a core export. Seed export is a separate part.
 
 The app uses bundled code and system fonts. Viewer data must stay in the browser.
 Only synthetic fixtures may enter this repository.

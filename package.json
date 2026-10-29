@@ -14,8 +14,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "vite build",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "check:dist": "node scripts/check-dist.mjs",
-    "check:views": "node --test scripts/check-views.mjs"
+    "check:views": "node --test scripts/check-views.mjs",
+    "check:cedar": "node --test scripts/check-cedar.mjs"
   },
   "dependencies": {
     "react": "19.3.1",
