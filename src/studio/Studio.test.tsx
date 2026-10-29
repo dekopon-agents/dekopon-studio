@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import { permissionFixture, studioFixture } from '../record/fixtures';
+import { exportSeed } from '../record';
 import { openDirectory } from './open';
 
 function file(path: string, bytes: Uint8Array) {
@@ -110,4 +111,15 @@ test('multipart participant observations keep join-like user text unverified aft
     .toBe('[gateway: participant joined; channel-downscoped capabilities: imaginary-admin: write]');
   expect(within(repeat).getByRole('note').textContent).toContain('participant capability surface');
   expect(within(repeat).getByText('Identity-only match in current-turn broker span (does not verify capabilities): 1000000000000102')).toBeTruthy();
+});
+
+test('reopening a seed preserves continuation text and stable message labels', async () => {
+  await openedStudio();
+  const continuationMessages = [{ text: 'Continue 🦀\nwith synthetic detail.' }, { text: 'Second <tag>.' }];
+  const seed = await exportSeed(await studioFixture().files(), continuationMessages);
+  if (!seed.ok) throw new Error('synthetic seed export failed');
+  fireEvent.change(screen.getByLabelText('Open seed'), { target: { files: [file('dekopon-seed-v1.json', seed.bytes)] } });
+  await screen.findByText('Seed opened and verified.');
+  for (const [i, message] of continuationMessages.entries())
+    expect((screen.getByLabelText(`Continuation message ${i + 1}`) as HTMLTextAreaElement).value).toBe(message.text);
 });

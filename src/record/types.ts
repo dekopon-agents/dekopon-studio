@@ -25,7 +25,7 @@ export interface ReadError {
   kind: 'utf8' | 'json' | 'manifest-shape' | 'bundle-version' | 'bundle-path'
     | 'file-integrity' | 'otlp-shape' | 'otlp-scalar' | 'otlp-depth'
     | 'known-event-shape' | 'journal-shape' | 'journal-index' | 'journal-reference'
-    | 'reader-failure';
+    | 'reader-failure' | 'seed-shape' | 'seed-version' | 'seed-base64' | 'seed-freeze';
   at: Location;
 }
 export interface FileReference { at: Location; path: string; sha256: string; bytes: string }
@@ -132,7 +132,7 @@ export interface PermissionRecord {
   decisions: BrokerDecision[]; effects: BrokerEffect[]; turns: PermissionTurn[];
 }
 export interface ChatRecord {
-  readerVersion: 3; bundleVersion: 1; dekoponVersion: Fact<string>;
+  readerVersion: 4; bundleVersion: 1; dekoponVersion: Fact<string>;
   references: FileReference[]; identity: { [key: string]: Json };
   freeze: Fact<Json>; completeness: Fact<Json>;
   messages: ChatMessage[]; unanchoredCalls: ModelCall[]; toolSets: ToolSet[]; journals: JournalRecord[];
@@ -142,3 +142,11 @@ export interface ChatRecord {
 }
 export type ReadResult = { ok: true; record: ChatRecord }
   | { ok: false; errors: ReadError[]; notes: Note[] };
+
+export interface ContinuationMessage { text: string }
+export type ReadSeedResult = {
+  ok: true; record: ChatRecord; files: ReadonlyMap<string, Uint8Array>;
+  continuationMessages: ContinuationMessage[]; seedDigest: string;
+} | Extract<ReadResult, { ok: false }>;
+export type ExportSeedResult = { ok: true; bytes: Uint8Array<ArrayBuffer>; seedDigest: string }
+  | Extract<ReadResult, { ok: false }>;

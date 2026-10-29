@@ -7,6 +7,7 @@ import { permissions } from './permissions';
 import type { ReadResult } from './types';
 
 export type * from './types';
+export { exportSeed, readSeed } from './seed';
 
 export async function readTrialBundle(files: ReadonlyMap<string, Uint8Array>): Promise<ReadResult> {
   const c = new Context();

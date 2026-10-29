@@ -17,6 +17,7 @@
     "build:wasm": "node scripts/build-wasm.mjs",
     "check:dist": "node scripts/check-dist.mjs",
     "check:views": "node --test scripts/check-views.mjs",
+    "check:seed": "node --test scripts/check-seed.mjs",
     "check:cedar": "node --test scripts/check-cedar.mjs"
   },
   "dependencies": {

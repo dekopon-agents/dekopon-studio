@@ -52,6 +52,7 @@ export class Fixture {
   version = '0.66.0';
   journal: string | null = journalText();
   extraJournals = new Map<string, string>();
+  fileOverrides = new Map<string, Uint8Array>();
   manifestGaps: string[] = [];
   traceOverride?: string;
   rawLog?: Json;
@@ -97,7 +98,7 @@ export class Fixture {
   ];
   async files(): Promise<Map<string, Uint8Array>> {
     const files = new Map<string, Uint8Array>();
-    const put = (path: string, raw: string) => files.set(path, encoder.encode(raw));
+    const put = (path: string, raw: string) => files.set(path, this.fileOverrides.get(path) ?? encoder.encode(raw));
     put('trace/traces.jsonl', this.traceOverride ?? JSON.stringify({ resourceSpans: [{
       resource: { attributes: attributes({ 'service.name': 'dekopon-gatewayd' }) },
       scopeSpans: [{ scope: { name: 'fixture' }, spans: this.spans }],

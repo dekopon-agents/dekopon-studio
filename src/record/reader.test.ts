@@ -17,7 +17,7 @@ function value<T>(fact: Fact<T>): T {
 }
 test('two messages use their earliest trace anchors and rebuild full then delta with exported tools', async () => {
   const r = record(await readTrialBundle(await new Fixture().files()));
-  expect(r.readerVersion).toBe(3); expect(r.bundleVersion).toBe(1); expect(value(r.dekoponVersion)).toBe('0.66.0');
+  expect(r.readerVersion).toBe(4); expect(r.bundleVersion).toBe(1); expect(value(r.dekoponVersion)).toBe('0.66.0');
   expect(r.messages.map(m => m.traceId)).toEqual([traceA, traceB]);
   expect(r.messages.map(m => m.ordinal)).toEqual([1, 2]);
   expect(r.messages[1].anchor.spanId).toBe('2000000000000001');
@@ -369,7 +369,7 @@ test('bundle v1 refuses a non-null seedDigest as a typed manifest error', async 
 });
 
 
-test('record v3 retains admissions, interrupted attempts and replay with typed mailbox gaps', async () => {
+test('record v4 retains admissions, interrupted attempts and replay with typed mailbox gaps', async () => {
   const r = record(await readTrialBundle(await studioFixture().files()));
   expect(r.messages[0].calls.map(call => value(call.outcome))).toEqual(['succeeded', 'steered', 'succeeded']);
   expect(r.messages[0].calls.map(call => value(call.stepCap))).toEqual(['4', '4', '4']);
