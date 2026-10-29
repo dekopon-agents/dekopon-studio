@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import { studioFixture } from '../record/fixtures';
+import { exportSeed } from '../record';
 import { openDirectory } from './open';
 
 function file(path: string, bytes: Uint8Array) {
@@ -74,4 +75,15 @@ test('folder opening refuses duplicate paths and mixed roots before reading byte
   const other = new File([], 'manifest.json');
   Object.defineProperty(other, 'webkitRelativePath', { value: 'other/manifest.json' });
   expect(await openDirectory([f, other])).toMatchObject({ ok: false, errors: [{ kind: 'bundle-path' }] });
+});
+
+test('reopening a seed preserves continuation text and stable message labels', async () => {
+  await openedStudio();
+  const continuationMessages = [{ text: 'Continue 🦀\nwith synthetic detail.' }, { text: 'Second <tag>.' }];
+  const seed = await exportSeed(await studioFixture().files(), continuationMessages);
+  if (!seed.ok) throw new Error('synthetic seed export failed');
+  fireEvent.change(screen.getByLabelText('Open seed'), { target: { files: [file('dekopon-seed-v1.json', seed.bytes)] } });
+  await screen.findByText('Seed opened and verified.');
+  for (const [i, message] of continuationMessages.entries())
+    expect((screen.getByLabelText(`Continuation message ${i + 1}`) as HTMLTextAreaElement).value).toBe(message.text);
 });
