@@ -3,10 +3,10 @@ import type { ObjectValue, Value } from './json';
 import type { Location, SpanKey } from './types';
 
 export interface Event {
-  key: SpanKey; at: Location; name: string; time: string; origin: 'span' | 'log'; attributes: ObjectValue;
+  key: SpanKey; at: Location; name: string; time: string; origin: 'span' | 'log'; attributes: ObjectValue; attributeTypes: Record<string, string>;
 }
 export interface Span {
-  key: SpanKey; at: Location; parent: string; name: string; start: string; end: string; attributes: ObjectValue;
+  key: SpanKey; at: Location; parent: string; name: string; start: string; end: string; attributes: ObjectValue; attributeTypes: Record<string, string>;
 }
 export interface Export { spans: Span[]; events: Event[] }
 const arr = (o: ObjectValue, key: string, c: Context, at: Location) =>
@@ -48,15 +48,21 @@ function value(v: Value | undefined, c: Context, at: Location, depth: number): V
     default: c.note('unknown-variant', at, key); return null;
   }
 }
-function attributes(items: Value[], c: Context, at: Location, depth = 0): ObjectValue {
+function attributes(items: Value[], c: Context, at: Location, depth = 0, types?: Record<string, string>): ObjectValue {
   return Object.fromEntries(items.map(item => {
     const o = object(item, c, at, 'otlp-shape');
     unknownFields(o, ['key', 'value'], c, at);
     const key = text(o.key, c, field(at, 'key'), 'otlp-scalar');
-    return [key, value(o.value === undefined ? {} : o.value, c, field(at, key), depth)];
+    const wire = object(o.value === undefined ? {} : o.value, c, field(at, key), 'otlp-shape');
+    const decoded = value(wire, c, field(at, key), depth);
+    if (types) types[key] = Object.keys(wire)[0] ?? '';
+    return [key, decoded];
   }));
 }
-function attrs(o: ObjectValue, c: Context, at: Location) { return attributes(arr(o, 'attributes', c, at), c, at); }
+function attrs(o: ObjectValue, c: Context, at: Location) {
+  const attributeTypes: Record<string, string> = {};
+  return { attributes: attributes(arr(o, 'attributes', c, at), c, at, 0, attributeTypes), attributeTypes };
+}
 function name(name: string, attributes: ObjectValue): string {
   for (const key of ['audit.event', 'event']) if (typeof attributes[key] === 'string' && attributes[key]) return attributes[key] as string;
   return name;
@@ -76,7 +82,7 @@ export function otlp(bytes: Uint8Array, path: string, logs: boolean, c: Context)
       unknownFields(r, ['resource', scopes, 'schemaUrl'], c, at);
       const res = object(r.resource === undefined ? {} : r.resource, c, at, 'otlp-shape');
       unknownFields(res, ['attributes', 'droppedAttributesCount'], c, at);
-      for (const key of Object.keys(attrs(res, c, at))) if (!['service.name', 'service.version', 'service.instance.id'].includes(key))
+      for (const key of Object.keys(attrs(res, c, at).attributes)) if (!['service.name', 'service.version', 'service.instance.id'].includes(key))
         c.note('unknown-field', field(at, 'resource.attributes'), key);
       for (const scope of arr(r, scopes, c, at)) {
         const s = object(scope, c, at, 'otlp-shape');
@@ -85,10 +91,10 @@ export function otlp(bytes: Uint8Array, path: string, logs: boolean, c: Context)
         unknownFields(instrumentation, ['name', 'version', 'attributes', 'droppedAttributesCount'], c, at);
         str(instrumentation, 'name', c, at);
         if (instrumentation.version !== undefined) str(instrumentation, 'version', c, at);
-        for (const key of Object.keys(attrs(instrumentation, c, at))) c.note('unknown-field', field(at, 'scope.attributes'), key);
+        for (const key of Object.keys(attrs(instrumentation, c, at).attributes)) c.note('unknown-field', field(at, 'scope.attributes'), key);
         for (const [index, item] of arr(s, logs ? 'logRecords' : 'spans', c, at).entries()) {
           const loc = field(at, (logs ? 'logRecords' : 'spans') + '[' + index + ']');
-          const o = object(item, c, loc, 'otlp-shape'), attributes = attrs(o, c, loc);
+          const o = object(item, c, loc, 'otlp-shape'), { attributes, attributeTypes } = attrs(o, c, loc);
           const key = { traceId: str(o, 'traceId', c, loc), spanId: str(o, 'spanId', c, loc) };
           if (logs) {
             unknownFields(o, ['traceId', 'spanId', 'timeUnixNano', 'observedTimeUnixNano', 'attributes',
@@ -97,7 +103,7 @@ export function otlp(bytes: Uint8Array, path: string, logs: boolean, c: Context)
             if (o.severityText !== undefined) str(o, 'severityText', c, loc);
             result.events.push({ key, at: loc, name: name(typeof body === 'string' ? body : '', attributes),
               time: nanos(o, 'timeUnixNano', c, loc) === '0' ? nanos(o, 'observedTimeUnixNano', c, loc) : nanos(o, 'timeUnixNano', c, loc),
-              origin: 'log', attributes });
+              origin: 'log', attributes, attributeTypes });
           } else {
             unknownFields(o, ['traceId', 'spanId', 'parentSpanId', 'name', 'startTimeUnixNano', 'endTimeUnixNano',
               'attributes', 'events', 'status', 'kind', 'links', 'droppedAttributesCount', 'droppedEventsCount',
@@ -108,15 +114,15 @@ export function otlp(bytes: Uint8Array, path: string, logs: boolean, c: Context)
             if (status.code !== undefined) integer(status.code, c, loc, 'otlp-scalar', 0n, 2n);
             const span: Span = { key, at: loc, parent: str(o, 'parentSpanId', c, loc),
               name: str(o, 'name', c, loc), start: nanos(o, 'startTimeUnixNano', c, loc),
-              end: nanos(o, 'endTimeUnixNano', c, loc), attributes };
+              end: nanos(o, 'endTimeUnixNano', c, loc), attributes, attributeTypes };
             result.spans.push(span);
             for (const [index, raw] of arr(o, 'events', c, loc).entries()) {
               const eventAt = field(loc, 'events[' + index + ']');
               const e = object(raw, c, eventAt, 'otlp-shape');
               unknownFields(e, ['timeUnixNano', 'name', 'attributes', 'droppedAttributesCount'], c, eventAt);
-              const attributes = attrs(e, c, eventAt);
+              const { attributes, attributeTypes } = attrs(e, c, eventAt);
               result.events.push({ key, at: eventAt, name: name(str(e, 'name', c, eventAt), attributes),
-                time: nanos(e, 'timeUnixNano', c, eventAt), origin: 'span', attributes });
+                time: nanos(e, 'timeUnixNano', c, eventAt), origin: 'span', attributes, attributeTypes });
             }
           }
         }

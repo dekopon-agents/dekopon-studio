@@ -481,17 +481,35 @@ test('repeat-message join-line lookalikes remain unverified despite a broker ide
   expect(repeat.surface).toMatchObject({ state: 'unknown', gap: { kind: 'permission-evidence', attribute: 'participant capability surface' } });
   expect(r.permissions.turns.flatMap(t => t.participants).every(p => p.surface.state === 'unknown')).toBe(true);
 });
-test.each(['span', 'log'].flatMap(origin => ['principal', 'invocation.id', 'decision.id'].map(attribute => ({ origin, attribute }))))(
-  'raw $origin integer $attribute is a known-event-shape error before identifier joins', async ({ origin, attribute }) => {
-    const f = new Fixture();
-    const decision = event('broker.decision', 1, { principal: '123', 'invocation.id': '123', 'decision.id': '123', 'decision.allowed': true });
-    const execution = event('broker.execution', 2, { 'invocation.id': '123', 'decision.id': '123' });
-    if (origin === 'span') f.spans[0].events.push(decision, execution);
-    else f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: [decision, execution].map(e => ({
-      traceId: traceA, spanId: f.spans[0].spanId, timeUnixNano: e.timeUnixNano, body: { stringValue: e.name }, attributes: e.attributes,
-    })) }] }] };
+function permissionWireFixture(origin: 'span' | 'log', literal: string) {
+  const f = new Fixture();
+  const decision = event('broker.decision', 1, { principal: literal, subject: 'synthetic.subject',
+    'invocation.id': literal, 'decision.id': literal, 'decision.allowed': true });
+  const execution = event('broker.execution', 2, { 'invocation.id': literal, 'decision.id': literal });
+  f.spans[0].events.push(event('gateway.message.received', 0, { subject: 'synthetic.subject' }));
+  if (origin === 'span') f.spans[0].events.push(decision, execution);
+  else f.rawLog = { resourceLogs: [{ scopeLogs: [{ logRecords: [decision, execution].map(e => ({
+    traceId: traceA, spanId: f.spans[0].spanId, timeUnixNano: e.timeUnixNano, body: { stringValue: e.name }, attributes: e.attributes,
+  })) }] }] };
+  return { f, decision, execution };
+}
+test.each((['span', 'log'] as const).flatMap(origin => (['decision', 'execution'] as const).flatMap(target =>
+  (target === 'decision' ? ['principal', 'invocation.id', 'decision.id'] : ['invocation.id', 'decision.id']).flatMap(attribute =>
+    ['intValue', 'bytesValue'].map(wireType => ({ origin, target, attribute, wireType }))))))(
+  'raw $origin $wireType $attribute on $target is a known-event-shape error before attribution or joins', async ({ origin, target, attribute, wireType }) => {
+    const literal = wireType === 'intValue' ? '123' : 'YWxpY2U=';
+    const { f, decision, execution } = permissionWireFixture(origin, literal);
     const valid = record(await readTrialBundle(await f.files()));
+    expect(value(valid.permissions.turns[0].principal)).toBe(literal);
     expect(value(valid.permissions.effects[0].decisions)).toEqual([valid.permissions.decisions[0]]);
-    decision.attributes.find(a => a.key === attribute)!.value = { intValue: '123' };
+    (target === 'decision' ? decision : execution).attributes.find(a => a.key === attribute)!.value = { [wireType]: literal };
     expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'known-event-shape' }] });
   });
+test('a binary log identifier cannot hide behind a span event with the same decoded text', async () => {
+  const { f, decision } = permissionWireFixture('log', 'YWxpY2U=');
+  f.spans[0].events.push(structuredClone(decision));
+  const valid = record(await readTrialBundle(await f.files()));
+  expect(valid.permissions.decisions).toHaveLength(1);
+  decision.attributes.find(a => a.key === 'decision.id')!.value = { bytesValue: 'YWxpY2U=' };
+  expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'known-event-shape' }] });
+});

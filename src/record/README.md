@@ -134,8 +134,11 @@ as unverified transcript text with call/message provenance; subsequent user text
 can impersonate that line. The capability surface always carries a typed gap. A
 current-turn principal/handle broker match corroborates identity only, never the
 claimed capabilities. Replayed handles and unmatched identities stay unverified.
-Permission attributes are validated on decoded OTLP values before normalization,
-so integer identifiers cannot become string facts or join string identifiers.
+Permission validation requires OTLP `stringValue` for string attributes and
+`boolValue` for booleans. The decoder retains each wire discriminator internally
+until validation, before log-copy suppression and JSON normalization; binary and
+integer identifiers cannot become string facts or join string identifiers. This
+internal metadata is discarded at the public record boundary.
 
 The policy text is decoded only from the manifest's integrity-checked reference.
 Bundle v1 cannot establish a full policy world, so `policy-world-unavailable`

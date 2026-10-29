@@ -22,12 +22,14 @@ function unknownActor(c: Context, at: Location): Fact<string> {
   return c.unknown('permission-attribution', at, { attribute: 'principal', detail: 'No unique broker principal matches the authenticated receipt subject.' });
 }
 
-// Validate decoded OTLP values before bigint-to-JSON normalization can erase types.
-export function validatePermissionAttributes(attributes: ObjectValue, at: Location, c: Context) {
+// Require the OTLP discriminator as well as the decoded scalar before attribution or joins.
+export function validatePermissionAttributes(attributes: ObjectValue, types: Record<string, string>, at: Location, c: Context) {
   for (const name of permissionAttributes) {
     const value = attributes[name];
     if (value === undefined) continue;
-    if (booleanAttributes.has(name) ? typeof value !== 'boolean' : typeof value !== 'string' || !wellFormed(value))
+    const boolean = booleanAttributes.has(name);
+    if (types[name] !== (boolean ? 'boolValue' : 'stringValue') ||
+      (boolean ? typeof value !== 'boolean' : typeof value !== 'string' || !wellFormed(value)))
       c.fail('known-event-shape', field(at, name));
   }
 }
