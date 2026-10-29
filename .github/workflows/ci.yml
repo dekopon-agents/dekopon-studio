@@ -34,6 +34,11 @@ jobs:
       - run: npm run check:views
       - run: npm run check:seed
       - run: npm run check:cedar
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: 3.12.12
+      - run: python3.12 harness/run.py harness/scenarios/two-message.json --output /tmp/evalgw-two-message
+      - run: node scripts/check-harness.mjs /tmp/evalgw-two-message
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

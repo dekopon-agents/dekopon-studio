@@ -13,7 +13,7 @@ BUNDLE_VERSION = 1
 MANIFEST = "manifest.json"
 SUBDIRECTORIES = ("trace", "journal", "config", "stdout")
 TRACE_FORMAT = "otlp-jsonl"
-JOURNAL_FORMAT = "dekopon-gatewayd-journal (internal, unversioned on disk; v2 at dekopon 0.62.0)"
+JOURNAL_FORMAT = "dekopon-gatewayd-journal (internal, unversioned on disk; v3 at dekopon 0.70.0)"
 
 
 def now() -> str:

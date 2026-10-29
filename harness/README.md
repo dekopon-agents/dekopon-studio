@@ -15,9 +15,9 @@ python3.12 harness/run.py harness/scenarios/two-message.json --output /tmp/evalg
 
 The command:
 
-1. Downloads the dekopon v0.62.0 x86_64 Linux release archive and gh provider v0.10.0 into
+1. Downloads the dekopon v0.70.0 x86_64 Linux release archive and gh provider v0.10.0 into
    `harness/.cache/` (ignored by git), verifies their pinned SHA-256 digests on every use, and checks
-   that both daemons print version 0.62.0. There is no source build.
+   that both daemons print version 0.70.0. There is no source build.
 2. Creates the attempt directory (it must not exist) with a placeholder manifest.
 3. Starts the digest-pinned OpenTelemetry Collector (contrib 0.137.0) with OTLP/HTTP on loopback and
    one `file` exporter each for traces and logs, then the loopback stub model and synthetic service.
@@ -46,15 +46,31 @@ take its origin from the fixture service (`providerSettings.gh.baseUrl: "{{servi
 accepted. The assembled configuration is checked again, with real loopback values, before any daemon
 starts.
 
-Output needles must fall within the provider output the model receives: on 0.62.0 tool output is
-cut at about 1 KiB with no marker before it reaches `agent.tool.output`. On a journal-backed route
-earlier turns come back as a `[memory: ...]` replay in an earlier user message, not as assistant
-messages, so the stub's `historyContains` predicate searches the user, tool and assistant messages
-before the final prompt; the final prompt and system prompts never satisfy it.
+On the v0.70.0 journal-backed route, the newest `hotTurns` records replay native user, assistant
+and tool messages, with tool results bounded by each record's share of `maxBytes`. Older records
+use the ladder (stored pin, stored choice, deepest generated summary, then native). The stub's
+`historyContains` predicate searches user, tool and assistant messages before the final prompt;
+the final prompt and system prompts never satisfy it.
+
+The two-message scenario explicitly sets `hotTurns: 10`, `summaries: "off"` and
+`selection: "ladder"`. Disabling new summary generation keeps its scripted completions limited to
+the two main-loop turns. Journals use the internal v3 format the Studio reader already reads;
+ordinary trials still use bundle v1 and its fixed-null `seedDigest`.
 
 The acceptance scenario, `scenarios/two-message.json`, makes one authorized `gh repo view` read
 through brokerd against the synthetic service, then asks the agent to recall that fact on a
 journal-backed route. Its whole `repo view` output is 69 bytes, well inside the output cap.
+
+After building the Studio and installing its pinned Playwright browser, open that generated bundle:
+
+```sh
+node scripts/check-harness.mjs /tmp/evalgw-attempt-001
+```
+
+This smoke check uses the existing built-page routing helper. It verifies a complete v0.70.0 trial,
+both frozen journal records and the recalled fact in the second call, drives both Studio views,
+and requires zero network requests after opening the bundle. CI runs the documented scenario and
+this check after the ordinary browser gates. No bundle contents are sent to a live site.
 
 ## Tests
 

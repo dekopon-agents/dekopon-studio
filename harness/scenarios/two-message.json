@@ -71,7 +71,10 @@
       },
       "memory": {
         "mode": "persistent",
-        "recall": "journal"
+        "recall": "journal",
+        "hotTurns": 10,
+        "summaries": "off",
+        "selection": "ladder"
       }
     },
     "sessions": {

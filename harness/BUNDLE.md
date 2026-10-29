@@ -34,7 +34,7 @@ holds no absolute host path and no URL a reader must fetch. An absent file is `n
 | `providers` | per provider: `id`, `name`, `version`, `source`, `sha256` |
 | `collector` | `image` (digest-pinned), `exitCode`, `forcedKill` |
 | `trace`, `logs` | `format: "otlp-jsonl"` plus the reference |
-| `journal` | `null`, or `format` and `files` (references). The format is the gateway's internal journal, unversioned on disk (v2 at dekopon 0.62.0); readers must treat it as coupled to that release |
+| `journal` | `null`, or `format` and `files` (references). The format is the gateway's internal journal, unversioned on disk (v3 at dekopon 0.70.0); readers must treat it as coupled to that release |
 | `freeze` | `null`, or `lastRepliedMessage`, `conversation`, `journalStems`, `gateway` (`signal`, `drained`, `exitCode`), `copiedAt` |
 | `config` | references for `scenario`, `catalog`, `broker`, `gateway`, `policies`, `collector` |
 | `stdout` | `gateway` and `broker` (`stdout`, `stderr` references), `collector`, `lossSignals` (console reasons, below) |
