@@ -1,7 +1,7 @@
 import { validBundlePath } from './bundle';
 import { readTrialBundle } from './index';
 import { array, Context, decode, Failure, field, object, parse, text, unknownFields } from './json';
-import type { ContinuationMessage, ExportSeedResult, ReadResult, ReadSeedResult } from './types';
+import type { ChatRecord, ContinuationMessage, ExportSeedResult, ReadResult, ReadSeedResult } from './types';
 
 const root = { path: 'dekopon-seed-v1.json' };
 const encoder = new TextEncoder();
@@ -29,6 +29,19 @@ function messages(value: unknown, c: Context): ContinuationMessage[] {
 function reachable(record: import('./types').ChatRecord): Set<string> {
   return new Set(['manifest.json', ...record.references.map(ref => ref.path)]);
 }
+function requireFrozenJournals(record: ChatRecord, files: ReadonlyMap<string, Uint8Array>, c: Context) {
+  const at = { path: 'manifest.json', field: 'freeze' };
+  if (record.freeze.state !== 'known' || record.gaps.some(gap => gap.kind === 'journal-missing' &&
+    gap.at.path === 'manifest.json' && gap.at.field === 'journal')) c.fail('seed-freeze', at);
+  const freeze = object(record.freeze.value, c, at, 'seed-freeze');
+  // After readTrialBundle, present journal.files references have passed size and digest checks.
+  const journals = new Set(record.references.filter(ref => ref.at.path === 'manifest.json' &&
+    ref.at.field === 'journal.files' && files.has(ref.path)).map(ref => ref.path));
+  for (const stem of array(freeze.journalStems, c, field(at, 'journalStems'), 'seed-freeze')) {
+    const path = 'journal/' + text(stem, c, field(at, 'journalStems'), 'seed-freeze') + '.jsonl';
+    if (!journals.has(path)) c.fail('seed-freeze', at);
+  }
+}
 // Lexicographic UTF-8 byte order, independent of locale and UTF-16 surrogate ordering.
 function comparePaths(a: string, b: string): number {
   const x = encoder.encode(a), y = encoder.encode(b);
@@ -43,7 +56,7 @@ export async function exportSeed(files: ReadonlyMap<string, Uint8Array>,
     const continuation = messages(continuationMessages, c);
     const result = await readTrialBundle(snapshot);
     if (!result.ok) return result;
-    if (result.record.freeze.state !== 'known') c.fail('seed-freeze', { path: 'manifest.json', field: 'freeze' });
+    requireFrozenJournals(result.record, snapshot, c);
     const entries = [...reachable(result.record)].filter(path => snapshot.has(path)).sort(comparePaths)
       .map(path => ({ path, base64: base64(snapshot.get(path)!) }));
     const bytes = encoder.encode(JSON.stringify({ seedVersion: 1, files: entries, continuationMessages: continuation }));
@@ -73,7 +86,7 @@ export async function readSeed(input: Uint8Array): Promise<ReadSeedResult> {
     }
     const result = await readTrialBundle(files);
     if (!result.ok) return { ...result, notes: [...c.notes, ...result.notes] };
-    if (result.record.freeze.state !== 'known') c.fail('seed-freeze', { path: 'manifest.json', field: 'freeze' });
+    requireFrozenJournals(result.record, files, c);
     const allowed = reachable(result.record);
     if ([...files.keys()].some(path => !allowed.has(path))) c.fail('seed-shape', field(root, 'files'));
     result.record.notes = [...c.notes, ...result.record.notes];

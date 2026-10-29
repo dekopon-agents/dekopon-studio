@@ -96,3 +96,22 @@ test('seed reader preserves all unknown-field notes beyond the function argument
   expect(notes).toHaveLength(130_000);
   expect(notes.every((note, i) => note.name === `future${i}`)).toBe(true);
 });
+
+test.each(['deleted file', 'null journal', 'absent journal reference', 'uncaptured stem'])(
+  'seed export and import require the frozen journals: %s', async missing => {
+    const files = await studioFixture().files();
+    const path = 'journal/agent/stem.jsonl';
+    if (missing === 'deleted file') files.delete(path);
+    else {
+      const manifest = JSON.parse(new TextDecoder().decode(files.get('manifest.json')));
+      if (missing === 'null journal') manifest.journal = null;
+      else if (missing === 'absent journal reference') manifest.journal.files = [];
+      else manifest.freeze.journalStems.push('agent/not-captured');
+      files.set('manifest.json', encoder.encode(JSON.stringify(manifest)));
+    }
+    expect(await exportSeed(files, [])).toMatchObject({ ok: false, errors: [{ kind: 'seed-freeze' }] });
+    const seed = await envelope();
+    seed.files = [...files].map(([path, bytes]) => ({ path, base64: Buffer.from(bytes).toString('base64') }));
+    expect(await readSeed(encoder.encode(JSON.stringify(seed))))
+      .toMatchObject({ ok: false, errors: [{ kind: 'seed-freeze' }] });
+  });

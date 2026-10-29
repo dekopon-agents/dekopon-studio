@@ -12,11 +12,15 @@ files remain byte-for-byte unchanged, including the manifest's null `seedDigest`
 | Field | Contract |
 | --- | --- |
 | `seedVersion` | Integer `1`; other versions are refused. |
-| `files` | Objects with `path` and `base64`. Include `manifest.json` and every present file reachable through its validated bundle-v1 references, once per path. Never include unreferenced siblings. Missing referenced files remain gaps. Paths follow bundle-v1 safety rules: relative, slash-separated, no empty, `.` or `..` segments, backslash, colon or NUL. Text must be valid Unicode. Bytes use standard RFC 4648 base64 with canonical padding and pad bits, no whitespace. |
+| `files` | Objects with `path` and `base64`. Include `manifest.json` and every present file reachable through its validated bundle-v1 references, once per path. Never include unreferenced siblings. Missing referenced files remain gaps except for the frozen journals required below. Paths follow bundle-v1 safety rules: relative, slash-separated, no empty, `.` or `..` segments, backslash, colon or NUL. Text must be valid Unicode. Bytes use standard RFC 4648 base64 with canonical padding and pad bits, no whitespace. |
 | `continuationMessages` | Ordered objects `{ "text": <Unicode string> }`, the harness scenario's message shape. Text is preserved exactly, including empty strings and line breaks. An empty array is valid; it schedules no further messages. Text supplies no authority. |
 
 Only a bundle whose reader validates the captured non-null `freeze` can be
-exported or imported as a seed. Marking selects that existing freeze; a timeline
+exported or imported as a seed. `manifest.journal` must be non-null, and every
+`freeze.journalStems` entry must have a present, integrity-verified
+`journal/<stem>.jsonl` reference in `manifest.journal.files`. An unavailable frozen
+journal is a `seed-freeze` error, not an allowed missing-evidence gap.
+Marking selects that existing freeze; a timeline
 cursor cannot create an earlier journal snapshot. Identity, conversation, grants,
 configuration and policy remain the embedded bundle's. Evidence gaps and
 incompleteness remain visible; seed validity does not assert a trial is scorable.
