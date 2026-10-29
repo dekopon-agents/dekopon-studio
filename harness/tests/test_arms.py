@@ -23,7 +23,7 @@ def assembled(scenario):
         collector_endpoint='http://127.0.0.1:4003', uid=os.geteuid())
 
 
-def make_seed():
+def make_seed(continuations=None):
     scenario = scenarios.load(ROOT / 'harness/scenarios/memory-reference.json')
     request = {'scenario': scenario, 'config': assembled(scenario),
                'dekopon': {'version': artifacts.DEKOPON_VERSION, 'source': artifacts.DEKOPON.source,
@@ -32,6 +32,8 @@ def make_seed():
                'providers': [{'id': name, 'name': artifacts.PROVIDERS[name].name, 'version': artifacts.PROVIDERS[name].version,
                               'source': artifacts.PROVIDERS[name].source, 'sha256': artifacts.PROVIDERS[name].sha256}
                              for name in scenario['providers']]}
+    if continuations is not None:
+        request['continuationMessages'] = continuations
     result = subprocess.run(['node', str(ROOT / 'harness/tests/make-seed.mjs')], input=json.dumps(request),
                             capture_output=True, text=True, cwd=ROOT, timeout=60, check=True)
     return base64.b64decode(result.stdout)
@@ -62,6 +64,20 @@ class SeedAndArmTest(unittest.TestCase):
         self.assertNotEqual(imported.digest, self.seed.digest)
         self.assertTrue(any(n['kind'] == 'unknown-field' and n['name'] == 'future' for n in imported.record['notes']))
         self.assertNotIn('synthetic future value', json.dumps(imported.record))
+
+    def test_studio_continuation_urls_are_preserved_for_every_arm(self):
+        messages = [{'text': 'Explain https://example.invalid in this synthetic conversation.'},
+                    {'text': 'Keep {{service.origin}} literal.\nUnicode: ☁'}]
+        self.path.write_bytes(make_seed(messages))
+        seed = Seed.read(self.path)
+        self.assertEqual(seed.messages, messages)
+        for arm in ('live-policy', 'decider', 'summaries-preferred'):
+            with self.subTest(arm=arm):
+                restored = Restored(seed, arm)
+                self.assertEqual(restored.scenario['messages'], messages)
+                for message in messages:
+                    self.assertEqual(json.loads(scenarios.request_line(restored.scenario, message['text']))['text'],
+                                     message['text'])
 
     def test_seed_refusals_are_the_studio_importers_errors(self):
         for defect, expected in [('path', 'bundle-path'), ('base64', 'seed-base64'), ('freeze', 'seed-freeze')]:

@@ -95,6 +95,16 @@ class BundleTest(unittest.TestCase):
         self.assertIn("first_projection_mismatch", [r["code"] for r in manifest["completeness"]["reasons"]])
         self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
 
+    def test_missing_sigterm_freeze_is_incomplete_in_initial_and_offline_grading(self):
+        record = synthetic.driver()
+        record['processes']['gateway']['signal'] = None
+        manifest, graded = self.finalize(record, journal=False)
+        self.assertIsNone(manifest['freeze'])
+        self.assertEqual(manifest['completeness']['status'], 'incomplete')
+        self.assertIn('process_failure', [r['code'] for r in manifest['completeness']['reasons']])
+        self.assertEqual((graded['status'], graded['score']), ('infrastructure_error', None))
+        self.assertEqual(verify.regrade(self.root), graded)
+
     def test_seeded_placeholder_and_final_manifest_use_version_two(self):
         attempt = Bundle.create(self.root, "synthetic", "two-message-gh-recall",
                                 seed_digest="a" * 64, arm_id="summaries-preferred")

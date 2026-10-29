@@ -130,6 +130,8 @@ def driver_failures(driver: dict[str, Any] | None, sent: int) -> list[Reason]:
             reasons.append(Reason("process_failure", f"{name} was killed after its shutdown deadline"))
         elif process.get("exitCode") != 0:
             reasons.append(Reason("process_failure", f"{name} exited {process.get('exitCode')!r}"))
+        elif name == "gateway" and process.get("signal") != "SIGTERM":
+            reasons.append(Reason("process_failure", "gateway has no recorded SIGTERM drain"))
     for name in ("gateway", "broker", "collector"):
         if name not in (driver.get("processes") or {}):
             reasons.append(Reason("process_failure", f"{name} has no recorded exit"))

@@ -30,6 +30,20 @@ class ScenarioTest(unittest.TestCase):
         with self.assertRaisesRegex(scenarios.ScenarioError, "exceeds"):
             scenarios.validate(data)
 
+    def test_message_shape_is_checked_before_transport(self):
+        for messages in (None, {}, [None], [{'text': None}], [{'text': '\ud800'}]):
+            with self.subTest(messages=messages):
+                data = synthetic.scenario()
+                data['messages'] = messages
+                with self.assertRaises(scenarios.ScenarioError):
+                    scenarios.validate(data)
+
+    def test_escaped_message_over_the_line_limit_is_refused(self):
+        data = synthetic.scenario()
+        data['messages'][0]['text'] = '\x00' * scenarios.MAX_TEXT_BYTES
+        with self.assertRaisesRegex(scenarios.ScenarioError, 'request line exceeds'):
+            scenarios.validate(data)
+
     def test_a_provider_without_a_fixture_origin_is_refused(self):
         data = synthetic.scenario()
         del data["broker"]["providerSettings"]["gh"]["baseUrl"]

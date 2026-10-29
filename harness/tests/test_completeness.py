@@ -117,6 +117,15 @@ class CompletenessTest(unittest.TestCase):
         self.driver["processes"]["gateway"] = {"signal": "SIGTERM", "forcedKill": True, "exitCode": -9}
         self.assertEqual(self.codes(), ["process_failure"])
 
+    def test_successful_exit_without_sigterm_is_a_process_failure(self):
+        for signal in (None, 'SIGINT', 'absent'):
+            with self.subTest(signal=signal):
+                process = self.driver['processes']['gateway']
+                process['signal'] = signal
+                if signal == 'absent':
+                    del process['signal']
+                self.assertEqual(self.codes(), ['process_failure'])
+
     def test_scripted_model_deviation_is_a_fixture_violation(self):
         self.driver["fixtures"]["model"]["violations"] = ["request 3: beyond the 3 scripted completions"]
         self.assertEqual(self.codes(), ["fixture_violation"])

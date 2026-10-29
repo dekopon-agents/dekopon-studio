@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import re
+from functools import cache
 from typing import Any
 
 from .bridge import Seed, SeedError
@@ -34,13 +35,9 @@ def prefix(raw: bytes, limit: int) -> bytes:
     return raw[:end]
 
 
-def body(seed: Seed, record: dict[str, Any]) -> bytes:
-    return seed.files[record['at']['path']].splitlines(keepends=True)[record['at']['line'] - 2]
-
-
-def native(seed: Seed, record: dict[str, Any], share: int) -> tuple[list[dict[str, Any]], int]:
-    raw = body(seed, record)
+def native(raw: bytes, record: dict[str, Any], share: int) -> tuple[list[dict[str, Any]], int]:
     spans = record['spans']
+    fields = {(s['item'], s['field']): (int(s['relOffset']), int(s['len'])) for s in spans}
     size = sum(int(s['len']) for s in spans if s['field'] in ('User', 'Steer', 'Assistant'))
     left = max(0, share - size)
     messages: list[dict[str, Any]] = []
@@ -59,9 +56,8 @@ def native(seed: Seed, record: dict[str, Any], share: int) -> tuple[list[dict[st
         content, calls, results = None, [], []
 
     def field(index: str, name: str) -> bytes:
-        span = next(s for s in spans if s['item'] == index and s['field'] == name)
-        start = int(span['relOffset'])
-        return raw[start:start + int(span['len'])]
+        start, length = fields[index, name]
+        return raw[start:start + length]
 
     for item in record['items']:
         kind = item['kind']
@@ -108,13 +104,13 @@ def ladder(record: dict[str, Any]) -> list[str]:
                        if s['state'] == 'generated'], 'metadata']
 
 
-def envelope(seed: Seed, record: dict[str, Any], rung: str) -> str:
+def envelope(raw: bytes, record: dict[str, Any], rung: str) -> str:
     time = datetime.datetime.fromtimestamp(int(record['atMs']) / 1000, datetime.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
     if rung.startswith('summary-'):
         part = int(rung.split('-')[1])
         detail = f"summary {part}/{len(record['summaries'])}"
     else:
-        detail = f"{len({s['item'] for s in record['spans']})} items · {len(body(seed, record))} B"
+        detail = f"{len({s['item'] for s in record['spans']})} items · {len(raw)} B"
     text = f"[memory #{record['key']['recordId']} · {time} · {detail}]"
     if rung.startswith('summary-'):
         text += '\n' + '\n'.join(s['text'] for s in record['summaries'][:part] if s['state'] == 'generated')
@@ -144,7 +140,7 @@ def expected(seed: Seed, config: dict[str, Any], now_ms: int) -> dict[str, Any]:
     grant = records[-1]['grant'] if records else []
     eligible = []
     trailing = True
-    for index, record in reversed(list(enumerate(records))):
+    for record in reversed(records):
         rid = record['key']['recordId']
         if len(eligible) >= 2 * max_turns + 1:
             omissions[rid] = 'RecallWindow'
@@ -154,12 +150,16 @@ def expected(seed: Seed, config: dict[str, Any], now_ms: int) -> dict[str, Any]:
             trailing = False
             omissions[rid] = 'GrantBoundary' if record['grant'] != grant else 'Horizon'
         else:
-            eligible.insert(0, record)
-    native_views = [native(seed, record, max_bytes // hot) for record in eligible]
+            eligible.append(record)
+    eligible.reverse()
+    lines = {path: seed.files[path].splitlines(keepends=True) for path in {r['at']['path'] for r in eligible}}
+    bodies = [lines[r['at']['path']][r['at']['line'] - 2] for r in eligible]
+    native_views = [native(raw, record, max_bytes // hot) for raw, record in zip(bodies, eligible)]
+    ladders = [ladder(record) for record in eligible]
     cold_from = max(0, len(eligible) - hot)
     rungs: list[str | None] = []
     for index, record in enumerate(eligible):
-        available = ladder(record)
+        available = ladders[index]
         if index >= cold_from:
             rungs.append('native')
         else:
@@ -169,27 +169,34 @@ def expected(seed: Seed, config: dict[str, Any], now_ms: int) -> dict[str, Any]:
             rungs.append(next((r for r in [pin['value'], choice['value'], *available[1:-1], 'native']
                                if r in available), 'native'))
 
-    def cost(index: int) -> int:
-        rung = rungs[index]
+    @cache
+    def rendered(index: int, rung: str) -> str:
+        return envelope(bodies[index], eligible[index], rung)
+
+    @cache
+    def cost(index: int, rung: str | None) -> int:
         if rung is None:
             return 0
-        return native_views[index][1] if rung == 'native' else len(envelope(seed, eligible[index], rung).encode()) + 1
+        return native_views[index][1] if rung == 'native' else len(rendered(index, rung).encode()) + 1
 
-    repacked = sum(cost(i) for i in range(len(eligible))) > max_bytes or len(eligible) >= 2 * max_turns
+    total = sum(cost(i, rung) for i, rung in enumerate(rungs))
+
+    def select(index: int, rung: str | None) -> None:
+        nonlocal total
+        total += cost(index, rung) - cost(index, rungs[index])
+        rungs[index] = rung
+
+    repacked = total > max_bytes or len(eligible) >= 2 * max_turns
     if repacked:
         for index in range(max(0, len(eligible) - max_turns)):
-            rungs[index] = None
-        while sum(cost(i) for i in range(len(eligible))) > max_bytes * 3 // 4:
-            index = next((i for i in range(cold_from) if rungs[i] is not None), None)
-            if index is not None:
-                available = ladder(eligible[index])
-                at = available.index(rungs[index])
-                rungs[index] = available[at + 1] if at + 1 < len(available) else None
-            else:
-                index = next((i for i in range(cold_from, len(eligible)) if rungs[i] is not None), None)
-                if index is None:
-                    break
-                rungs[index] = None
+            select(index, None)
+        for index in range(len(eligible)):
+            while total > max_bytes * 3 // 4 and rungs[index] is not None:
+                available = ladders[index]
+                at = available.index(rungs[index]) + 1
+                select(index, available[at] if index < cold_from and at < len(available) else None)
+            if total <= max_bytes * 3 // 4:
+                break
     history = []
     earlier = []
     rows = []
@@ -200,7 +207,7 @@ def expected(seed: Seed, config: dict[str, Any], now_ms: int) -> dict[str, Any]:
         elif rung == 'native':
             history.extend(native_views[index][0])
         else:
-            earlier.append('\n' + envelope(seed, record, rung))
+            earlier.append('\n' + rendered(index, rung))
         rows.append({'key': record['key'], 'expectedRung': rung, 'omission': omissions.get(rid),
                      'expectedMessages': native_views[index][0] if rung == 'native' else []})
     if earlier:
@@ -210,7 +217,7 @@ def expected(seed: Seed, config: dict[str, Any], now_ms: int) -> dict[str, Any]:
                 for r in records if r['key']['recordId'] not in present)
     return {'history': history, 'records': rows, 'repacked': repacked,
             'recordIds': [r['key']['recordId'] for r, rung in zip(eligible, rungs) if rung is not None],
-            'bytes': sum(cost(i) for i in range(len(eligible))),
+            'bytes': total,
             'rungCounts': {'native': rungs.count('native'),
                            'summary': sum(bool(r and r.startswith('summary-')) for r in rungs),
                            'metadata': rungs.count('metadata')}}

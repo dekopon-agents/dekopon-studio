@@ -38,7 +38,7 @@ try {
     manifest.scenario.id = request.scenario.id;
   }
   files.set('manifest.json', new TextEncoder().encode(JSON.stringify(manifest)));
-  const result = await exportSeed(files, [{ text: 'synthetic continuation' }]);
+  const result = await exportSeed(files, request.continuationMessages ?? [{ text: 'synthetic continuation' }]);
   if (!result.ok) throw new Error(JSON.stringify(result));
   process.stdout.write(Buffer.from(result.bytes).toString('base64'));
 } finally { await server.close(); }

@@ -39,7 +39,8 @@ a bundle whose files no longer match the manifest hashes.
 A scenario is JSON data, never code: catalog agent fields, broker `capabilities` and
 `providerSettings`, Cedar policy lines, gateway route settings, ordered messages, scripted stub
 completions (each with request predicates and one `answer` or `bash` response), exact service routes,
-and grading rules. External URLs are refused; the only substitutions are the attempt's loopback values
+and grading rules. Configuration URLs are refused; message text (including URLs) stays literal and
+is checked separately for shape and transport limits. The only substitutions are the attempt's loopback values
 (`{{service.authority}}`, `{{service.origin}}`) and `{{principal}}`, `{{agent}}`. Every provider must
 take its origin from the fixture service (`providerSettings.gh.baseUrl: "{{service.origin}}"`), every
 `allowedHosts` must be exactly `["{{service.authority}}"]`, and no credential or secret binding is
