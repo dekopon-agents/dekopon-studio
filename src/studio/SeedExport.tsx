@@ -45,10 +45,11 @@ export default function SeedExport({ record, files, initialMessages, importedDig
     <p>The seed preserves the referenced bundle bytes, identity, catalog and policy, including any evidence gaps shown below. Continuation text grants no authority.</p>
     <fieldset disabled={busy}><legend>Continuation messages (in send order)</legend>
       <ol>{messages.map((message, i) => <li key={i}>
-        <label>Continuation message {i + 1}<textarea value={message.text} onChange={event => {
+        <label htmlFor={'continuation-message-' + i}>Continuation message {i + 1}</label>
+        <textarea id={'continuation-message-' + i} value={message.text} onChange={event => {
           setMessages(current => current.map((entry, index) => index === i ? { text: event.target.value } : entry));
           setDigest(undefined);
-        }} /></label>
+        }} />
         <button onClick={() => { setMessages(current => current.filter((_, index) => index !== i)); setDigest(undefined); }}>Remove message {i + 1}</button>
       </li>)}</ol>
       <button onClick={() => { setMessages(current => [...current, { text: '' }]); setDigest(undefined); }}>Add continuation message</button>
