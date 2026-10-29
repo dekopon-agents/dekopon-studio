@@ -1,7 +1,7 @@
 import { array, canonical, Context, decimal, field, json, known, object, parse, text, wellFormed } from './json';
 import type { ObjectValue, Value } from './json';
 import type { Event, Export, Span } from './otlp';
-import { permissionAttributes } from './permissions';
+import { permissionAttributes, validatePermissionAttributes } from './permissions';
 import type { CallOutcome, ChatMessage, ChatRecord, EvidenceRecord, Fact, Json, Location, ModelCall, SpanKey, ToolExchange } from './types';
 
 const settings = ['model.name', 'model', 'model.backend', 'model.dialect', 'model.stream', 'cache.style',
@@ -84,6 +84,7 @@ function bounded(o: ObjectValue, key: string, c: Context, at: Location, required
   return true;
 }
 function validate(e: Event, c: Context): boolean {
+  validatePermissionAttributes(e.attributes, e.at, c);
   let final = false;
   if (e.name === 'agent.model.answer') {
     const answer = bounded(e.attributes, 'answer', c, e.at, false);
@@ -167,6 +168,7 @@ export function reconstruct(record: ChatRecord, exported: Export, c: Context) {
   for (const s of exported.spans) {
     if (!spans.has(s.name)) c.note('unknown-span', s.at, s.name);
     else {
+      validatePermissionAttributes(s.attributes, s.at, c);
       const contextAttributes = Object.fromEntries(Object.entries(s.attributes).filter(([name]) =>
         ['conversation.turns', 'conversation.bytes', 'generation.digest', 'prompt.max_steps', 'prompt.max_capability_calls'].includes(name)));
       validate({ key: s.key, at: s.at, name: s.name, time: s.start, origin: 'span', attributes: contextAttributes }, c);

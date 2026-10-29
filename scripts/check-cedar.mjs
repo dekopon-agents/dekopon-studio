@@ -26,6 +26,16 @@ await test('cedar opens a synthetic shared-channel bundle without network reques
         assert.equal(await denied.getByLabel('Recorded allowed', { exact: true }).textContent(), 'false');
         assert.ok(await panel.getByText('alice · p1', { exact: true }).count() > 0);
       });
+      await t.test('multipart prefixes survive and repeat-message capability claims remain visibly unverified', async () => {
+        const image = panel.getByRole('region', { name: 'Participant alice · call 1000000000000003 · message 0', exact: true });
+        assert.equal(JSON.parse(await image.getByLabel('Unverified join-line text', { exact: true }).textContent()),
+          '[gateway: participant joined; channel-downscoped capabilities: fixture: read, write]');
+        const repeat = panel.getByRole('region', { name: 'Participant alice · call 1000000000000008 · message 1', exact: true });
+        assert.equal(JSON.parse(await repeat.getByLabel('Unverified join-line text', { exact: true }).textContent()),
+          '[gateway: participant joined; channel-downscoped capabilities: imaginary-admin: write]');
+        await repeat.getByText('Missing evidence: participant capability surface', { exact: true }).waitFor();
+        await repeat.getByText('Identity-only match in current-turn broker span (does not verify capabilities): 1000000000000102', { exact: true }).waitFor();
+      });
       await t.test('the missing provider inventory yields a visible world gap through the real wasm module', async () => {
         await panel.getByLabel('What-if principal', { exact: true }).fill('bob');
         await panel.getByLabel('What-if capability', { exact: true }).fill('fixture.write');

@@ -60,11 +60,18 @@ struct ConversationFacts {
     thread: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum EvaluationError {
+    InvalidWorld,
+    InvalidPolicy,
+    InvalidRequest,
+}
+
 fn evaluate_known(
     policy: &str,
     world: WorldFacts,
     request: RequestFacts,
-) -> Result<String, &'static str> {
+) -> Result<String, EvaluationError> {
     let read_only = world
         .capabilities
         .iter()
@@ -75,16 +82,16 @@ fn evaluate_known(
         world.principals,
         world.capabilities.into_iter().map(|c| (c.id, c.provider)),
     )
-    .map_err(|_| "invalid-world")?
+    .map_err(|_| EvaluationError::InvalidWorld)?
     .with_subjects(world.subjects)
     .with_group_members(world.groups)
     .with_read_only(read_only)
     .with_secrets(world.secrets);
     let engine = if world.strict {
-        PolicyEngine::new(policy, &engine_world).map_err(|_| "invalid-policy")?
+        PolicyEngine::new(policy, &engine_world).map_err(|_| EvaluationError::InvalidPolicy)?
     } else {
         PolicyEngine::new_lenient(policy, &engine_world)
-            .map_err(|_| "invalid-policy")?
+            .map_err(|_| EvaluationError::InvalidPolicy)?
             .0
     };
     let context = request.context;
@@ -114,7 +121,7 @@ fn evaluate_known(
     };
     let asker = engine.authorize(proposed.clone());
     if asker.refusal.is_some() {
-        return Err("invalid-request");
+        return Err(EvaluationError::InvalidRequest);
     }
     let space = request.space.map(|principal| {
         engine.authorize(PolicyRequest {
@@ -123,7 +130,7 @@ fn evaluate_known(
         })
     });
     if space.as_ref().is_some_and(|s| s.refusal.is_some()) {
-        return Err("invalid-request");
+        return Err(EvaluationError::InvalidRequest);
     }
     Ok(json!({
         "kind": "evaluation", "engine": "dekopon-policy 0.70.0",
@@ -136,24 +143,46 @@ fn evaluate_known(
     .to_string())
 }
 
+fn evaluate_with_world(
+    policy: &str,
+    world_json: &str,
+    request_json: &str,
+) -> Result<String, EvaluationError> {
+    serde_json::from_str::<WorldFacts>(world_json)
+        .map_err(|_| EvaluationError::InvalidWorld)
+        .and_then(|world| {
+            serde_json::from_str::<RequestFacts>(request_json)
+                .map_err(|_| EvaluationError::InvalidRequest)
+                .and_then(|request| evaluate_known(policy, world, request))
+        })
+}
+
 #[wasm_bindgen]
 pub fn evaluate(policy: &str, world_json: Option<String>, request_json: &str) -> String {
     let Some(world_json) = world_json else {
         return json!({ "kind": "gap", "engine": "dekopon-policy 0.70.0", "reason": "missing-world", "missing": "provider-inventory" }).to_string();
     };
-    let result = serde_json::from_str::<WorldFacts>(&world_json)
-        .map_err(|_| "invalid-world")
-        .and_then(|world| {
-            serde_json::from_str::<RequestFacts>(request_json)
-                .map_err(|_| "invalid-request")
-                .and_then(|request| evaluate_known(policy, world, request))
-        });
-    result.unwrap_or_else(|reason| json!({ "kind": "gap", "reason": reason }).to_string())
+    let result = evaluate_with_world(policy, &world_json, request_json);
+    result.unwrap_or_else(|error| {
+        let reason = match error {
+            EvaluationError::InvalidWorld => "invalid-world",
+            EvaluationError::InvalidPolicy => "invalid-policy",
+            EvaluationError::InvalidRequest => "invalid-request",
+        };
+        json!({ "kind": "gap", "reason": reason }).to_string()
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn explicit_facts() -> (String, String) {
+        let world = json!({ "principals": ["alice"], "capabilities": [{ "id": "fixture.read", "provider": "fixture", "effect": "read-only" }],
+            "subjects": [], "groups": [], "secrets": [], "strict": true }).to_string();
+        let request = json!({ "principal": "alice", "capability": "fixture.read", "provider": "fixture", "effect": "read-only", "risk": "Low", "context": { "via": "dekopon-gatewayd", "agent": "fixture-agent" } }).to_string();
+        (world, request)
+    }
 
     #[test]
     fn missing_provider_inventory_never_builds_a_guessed_world() {
@@ -166,9 +195,7 @@ mod tests {
     #[test]
     fn explicit_engine_facts_are_evaluated_by_the_published_crate() {
         // Engine bridge test, not a bundle what-if: no bundle claims this inventory.
-        let world = json!({ "principals": ["alice"], "capabilities": [{ "id": "fixture.read", "provider": "fixture", "effect": "read-only" }],
-            "subjects": [], "groups": [], "secrets": [], "strict": true }).to_string();
-        let request = json!({ "principal": "alice", "capability": "fixture.read", "provider": "fixture", "effect": "read-only", "risk": "Low", "context": { "via": "dekopon-gatewayd", "agent": "fixture-agent" } }).to_string();
+        let (world, request) = explicit_facts();
         let allow = r#"@id("fixture-read") permit(principal == Dekopon::Principal::"alice", action == Dekopon::Action::"fixture.read", resource == Dekopon::Provider::"fixture");"#;
         let allowed: serde_json::Value =
             serde_json::from_str(&evaluate(allow, Some(world.clone()), &request)).unwrap();
@@ -177,5 +204,57 @@ mod tests {
         let denied: serde_json::Value =
             serde_json::from_str(&evaluate("", Some(world), &request)).unwrap();
         assert_eq!(denied["allowed"], false);
+    }
+
+    #[test]
+    fn invalid_inputs_return_closed_errors_before_boundary_serialization() {
+        let (world, request) = explicit_facts();
+        let mut conflicting_world: serde_json::Value = serde_json::from_str(&world).unwrap();
+        let capabilities = conflicting_world["capabilities"].as_array_mut().unwrap();
+        capabilities.push(capabilities[0].clone());
+        let mut refused_request: serde_json::Value = serde_json::from_str(&request).unwrap();
+        refused_request["context"] = json!({});
+        for (policy, world, request, error, reason) in [
+            (
+                "",
+                "{}".to_owned(),
+                request.clone(),
+                EvaluationError::InvalidWorld,
+                "invalid-world",
+            ),
+            (
+                "",
+                conflicting_world.to_string(),
+                request.clone(),
+                EvaluationError::InvalidWorld,
+                "invalid-world",
+            ),
+            (
+                "invalid Cedar",
+                world.clone(),
+                request.clone(),
+                EvaluationError::InvalidPolicy,
+                "invalid-policy",
+            ),
+            (
+                "",
+                world.clone(),
+                "{}".to_owned(),
+                EvaluationError::InvalidRequest,
+                "invalid-request",
+            ),
+            (
+                "",
+                world,
+                refused_request.to_string(),
+                EvaluationError::InvalidRequest,
+                "invalid-request",
+            ),
+        ] {
+            assert_eq!(evaluate_with_world(policy, &world, &request), Err(error));
+            let boundary: serde_json::Value =
+                serde_json::from_str(&evaluate(policy, Some(world), &request)).unwrap();
+            assert_eq!(boundary, json!({ "kind": "gap", "reason": reason }));
+        }
     }
 }

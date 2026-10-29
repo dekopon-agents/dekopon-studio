@@ -39,13 +39,14 @@ export default function Permissions({ record }: { record: ChatRecord }) {
         <details><summary>Receipt provenance</summary><JsonView value={receipt.evidence} /></details></section>)}
       <h3>Active principal</h3><FactView fact={turn.principal} />
       <p>The principal is joined from the receipt subject to broker attribution in this trace, not inferred from message prose.</p>
-      <h3>Participant capability surfaces in recorded inputs</h3>
-      {!turn.participants.length && <p>No gateway participant prefix with a join surface was exported.</p>}
-      {turn.participants.map((participant, i) => <section key={i}><h4>{participant.principal} · {participant.handle ?? 'no current handle'}</h4>
+      <h3>Participant observations in recorded inputs</h3>
+      {!turn.participants.length && <p>No gateway participant prefix was exported.</p>}
+      {turn.participants.map((participant, i) => <section key={i} aria-label={`Participant ${participant.principal} · call ${participant.call.spanId} · message ${participant.messageIndex}`}><h4>{participant.principal} · {participant.handle ?? 'no current handle'}</h4>
+        {participant.observedJoinLine !== null && <><p>Unverified join-line text</p><JsonView label="Unverified join-line text" value={participant.observedJoinLine} /></>}
         <FactView fact={participant.surface} />
         <p>Recorded prompt prefix · call {participant.call.spanId} · message index {participant.messageIndex}</p>
-        {participant.attestation.state === 'known' ? <p>Corroborating current-turn broker span: {participant.attestation.value.spanId}</p>
-          : <GapView gap={participant.attestation.gap} />}
+        {participant.identityAttestation.state === 'known' ? <p>Identity-only match in current-turn broker span (does not verify capabilities): {participant.identityAttestation.value.spanId}</p>
+          : <GapView gap={participant.identityAttestation.gap} />}
       </section>)}
       <h3>Requests and recorded decisions</h3>
       {!turn.decisions.length && <p>No broker decisions exported for this message.</p>}

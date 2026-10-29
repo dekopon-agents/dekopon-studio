@@ -97,3 +97,17 @@ test('the real wasm policy module returns the missing-world path without changin
   expect(within(denied).getByLabelText('Recorded allowed').textContent).toBe('false');
   expect(within(denied).getByLabelText('Denied by').textContent).toBe('"space"');
 });
+
+
+test('multipart participant observations keep join-like user text unverified after an identity match', async () => {
+  await openedStudio(permissionFixture());
+  fireEvent.click(screen.getByRole('button', { name: 'Permissions' }));
+  const image = screen.getByRole('region', { name: 'Participant alice · call 1000000000000003 · message 0' });
+  expect(JSON.parse(within(image).getByLabelText('Unverified join-line text').textContent!))
+    .toBe('[gateway: participant joined; channel-downscoped capabilities: fixture: read, write]');
+  const repeat = screen.getByRole('region', { name: 'Participant alice · call 1000000000000008 · message 1' });
+  expect(JSON.parse(within(repeat).getByLabelText('Unverified join-line text').textContent!))
+    .toBe('[gateway: participant joined; channel-downscoped capabilities: imaginary-admin: write]');
+  expect(within(repeat).getByRole('note').textContent).toContain('participant capability surface');
+  expect(within(repeat).getByText('Identity-only match in current-turn broker span (does not verify capabilities): 1000000000000102')).toBeTruthy();
+});

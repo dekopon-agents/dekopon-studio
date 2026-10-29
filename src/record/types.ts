@@ -120,7 +120,7 @@ export interface BrokerEffect {
 }
 export interface ParticipantObservation {
   principal: string; handle: string | null; surface: Fact<string>; call: SpanKey; messageIndex: number;
-  attestation: Fact<SpanKey>;
+  observedJoinLine: string | null; identityAttestation: Fact<SpanKey>;
 }
 export interface PermissionTurn {
   traceId: string; ordinal: number; receipts: { evidence: EvidenceRecord; subject: Fact<string> }[];

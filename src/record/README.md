@@ -108,9 +108,8 @@ These are distinct from `memory.generation` on projection/publication evidence.
 Coordinator ruling, 2026-10-28T22:00Z: v0.70.0 does not export mailbox drains or
 exact RUNNING/COMPLETING boundaries. The Studio shows admissions and combined
 depth, but queue inventories and those intervals stay explicitly unknown. Exact
-mailbox animation waits for a core export. Recorded permissions and a missing
-policy-world path belong to the later cedar part; successful same-request
-what-if evaluation also waits for a core export of the provider inventory.
+mailbox animation waits for a core export. Successful same-request what-if
+evaluation also waits for a core export of the provider inventory.
 
 A freeze is known only with the required conversation kind and id as well as the
 existing drain evidence. Bundle v1 refuses a non-null `seedDigest` with a typed
@@ -128,12 +127,15 @@ Effects join only on trace, invocation id and decision id. Every matching decisi
 occurrence remains available, including multiple records on one span. No temporal
 or capability-only join is used. Unanchored evidence remains in the global lists.
 
-Participant surfaces are extracted only from the first gateway-authored user
-prefix and immediately following join line in reconstructed inputs. They are
-labeled as recorded transcript observations, with call/message provenance. A
-current-turn principal/handle broker match is required for corroboration; replayed
-handles and unmatched labels stay unverified. These lines summarize downscoped
-read/write surfaces; they are never treated as a provider inventory or new grant.
+Participant observations decode plain strings and multipart arrays of strings,
+using only the initial text part for the prefix. Unsupported user-content forms
+produce a typed evidence gap. An immediately following join-like line is retained
+as unverified transcript text with call/message provenance; subsequent user text
+can impersonate that line. The capability surface always carries a typed gap. A
+current-turn principal/handle broker match corroborates identity only, never the
+claimed capabilities. Replayed handles and unmatched identities stay unverified.
+Permission attributes are validated on decoded OTLP values before normalization,
+so integer identifiers cannot become string facts or join string identifiers.
 
 The policy text is decoded only from the manifest's integrity-checked reference.
 Bundle v1 cannot establish a full policy world, so `policy-world-unavailable`
