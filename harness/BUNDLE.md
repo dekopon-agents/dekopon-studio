@@ -1,4 +1,4 @@
-# Trial bundle, version 1
+# Trial bundles, versions 1 and 2
 
 One attempt writes one directory. It is created exclusively and is never reused or deleted, including
 for launch failures. `manifest.json` is written before any daemon starts, as an incomplete placeholder,
@@ -87,10 +87,10 @@ is never graded.
 Scripts are each bash call's `agent.tool.script` text and `agent.tool.output` result, paired by
 `gen_ai.tool.call.id`; dekopon does not bound either. Script needles, output counts and read order are
 graded from them, as S4 grades its runner's scripts. The tool output reaching `agent.tool.output`
-is already capped upstream (about 1 KiB on 0.62.0 with gh 0.10.0, cut with no marker); that is the
-text the model saw, so grading it is sound, but `output` and `readOrder` needles must sit inside that
-cap or they read as absent. `shell.command.output` is not used: on 0.62.0 a
-provider command can export it empty (`.bytes` 0) while its stdout reached the script. `shell.command`
+is the text that reached the model after the shell, process and provider's own bounds. Do not assume
+one fixed output cap: the v0.70.0 reference fixture produces roughly 200 KiB through the shell.
+Place `output` and `readOrder` needles inside that captured result; never substitute a command's
+separate stdout field for the combined script result. `shell.command`
 spans still decide the `command`, `argumentsContain`, `outcome` and `exitCode` checks. Their
 `.arguments` are bounded at 4096 bytes, with the original length recorded as `.arguments.bytes`; a
 truncated value, or one without its length, is a gap. Any evidence field of the wrong type (a
@@ -109,3 +109,23 @@ attributes and console lines is decoded without raising.
 `grade.json`: `gradeVersion: 1`, `status` (`passed`, `failed` or `infrastructure_error`), `score`
 (`1.0`, `0.0` or `null`), `reasons`, and per-rule `rules` results (`pass`, `fail`, `gap`). An incomplete
 bundle, or any rule whose evidence field is absent, is `infrastructure_error` with `score: null`.
+
+## Seeded trial bundle, version 2
+
+Ordinary trials keep version 1 and its fixed-null `seedDigest`. Seeded trials use version 2; its only
+manifest changes are a required non-null `seedDigest` (lowercase 64-hex SHA-256 of the exact seed
+file bytes) and a required nonempty `armId`. The runner writes `live-policy`, `decider` or
+`summaries-preferred`. File references, evidence, freeze, completeness and grading retain their v1
+contracts. The reader accepts both versions as record v5 and keeps the observed bundle version.
+The seed-v1 envelope and its embedded bundle-v1 contract remain unchanged.
+
+`driver.json` adds `seed: {digest, armId, notes, gaps, completeness}` and `firstProjection`. The comparison records the
+first continuation main-loop model call key, seed digest, arm id, expected and observed input
+digests, expected selected record ids, observed ids when exported, repacking and byte counts, and every frozen record's expected rung
+or named omission. Per-record attribution is `reconstructed-from-exact-replay` only when the whole
+replay, authenticated continuation, rung counts and byte count match; absent observed ids remain
+null. Status is `matched`, `mismatch` or `unavailable`. WindowFit omissions are
+reported as `WindowFit` and checked against the gateway's `window-fit` notice. A mismatch, absent
+input or unsupported evidence makes the trial incomplete (`first_projection_mismatch` or
+`first_projection_unavailable`) with a null score. An empty continuation array schedules no message
+and records `no_continuations`; it cannot claim a first-projection result.

@@ -23,7 +23,11 @@ a typed error. Attachment inventory is constructed from allowed metadata fields.
 An asset's `source` is discarded, including its nested fields; it never appears
 in a returned record, note or error. Opaque reasoning bytes are omitted.
 
-## Record version 4
+## Record version 5
+
+The reader accepts bundle v1 and seeded bundle v2. Version 2 adds a required non-null lowercase
+SHA-256 `seedDigest` and nonempty `armId`, exposed in `identity`. Version 1 retains its null digest.
+Seed v1 envelopes still embed bundle v1; accepting trial v2 does not change the seed contract.
 
 The result carries `readerVersion`, the manifest's `bundleVersion`, the observed
 dekopon version, build/catalog/policy file references, freeze evidence,

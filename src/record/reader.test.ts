@@ -2,7 +2,7 @@
 import { expect, test, vi } from 'vitest';
 import { readTrialBundle } from './index';
 import { steps } from '../studio/model';
-import type { Fact, ReadResult } from './types';
+import type { Fact, Json, ReadResult } from './types';
 import { attributes, definitions, event, Fixture, journalText, permissionFixture, prompt, span, studioFixture, traceA, traceB, traceSummary } from './fixtures';
 
 function record(result: ReadResult) {
@@ -17,7 +17,7 @@ function value<T>(fact: Fact<T>): T {
 }
 test('two messages use their earliest trace anchors and rebuild full then delta with exported tools', async () => {
   const r = record(await readTrialBundle(await new Fixture().files()));
-  expect(r.readerVersion).toBe(4); expect(r.bundleVersion).toBe(1); expect(value(r.dekoponVersion)).toBe('0.66.0');
+  expect(r.readerVersion).toBe(5); expect(r.bundleVersion).toBe(1); expect(value(r.dekoponVersion)).toBe('0.66.0');
   expect(r.messages.map(m => m.traceId)).toEqual([traceA, traceB]);
   expect(r.messages.map(m => m.ordinal)).toEqual([1, 2]);
   expect(r.messages[1].anchor.spanId).toBe('2000000000000001');
@@ -512,4 +512,30 @@ test('a binary log identifier cannot hide behind a span event with the same deco
   expect(valid.permissions.decisions).toHaveLength(1);
   decision.attributes.find(a => a.key === 'decision.id')!.value = { bytesValue: 'YWxpY2U=' };
   expect(await readTrialBundle(await f.files())).toMatchObject({ ok: false, errors: [{ kind: 'known-event-shape' }] });
+});
+
+test('seeded bundle v2 exposes validated identity beside the unchanged record evidence', async () => {
+  const fixture = studioFixture();
+  fixture.extraManifest.bundleVersion = 2;
+  fixture.extraManifest.seedDigest = 'a'.repeat(64);
+  fixture.extraManifest.armId = 'summaries-preferred';
+  const r = record(await readTrialBundle(await fixture.files()));
+  expect(r.readerVersion).toBe(5);
+  expect(r.bundleVersion).toBe(2);
+  expect(r.identity.seedDigest).toBe('a'.repeat(64));
+  expect(r.identity.armId).toBe('summaries-preferred');
+  expect(r.journals).toHaveLength(1);
+  expect(r.permissions.world.state).toBe('unknown');
+});
+
+test.each<Record<string, Json>>([
+  { seedDigest: null, armId: 'live-policy' },
+  { seedDigest: 'A'.repeat(64), armId: 'live-policy' },
+  { seedDigest: 'a'.repeat(64), armId: '' },
+  { seedDigest: 'a'.repeat(64) },
+  { armId: 'live-policy' },
+])('bundle v2 refuses missing or malformed identity (%#)', async identity => {
+  const fixture = studioFixture();
+  fixture.extraManifest = { bundleVersion: 2, ...identity };
+  expect(await readTrialBundle(await fixture.files())).toMatchObject({ ok: false, errors: [{ kind: 'manifest-shape' }] });
 });

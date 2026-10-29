@@ -30,6 +30,7 @@ function reachable(record: import('./types').ChatRecord): Set<string> {
   return new Set(['manifest.json', ...record.references.map(ref => ref.path)]);
 }
 function requireFrozenJournals(record: ChatRecord, files: ReadonlyMap<string, Uint8Array>, c: Context) {
+  if (record.bundleVersion !== 1) c.fail('seed-shape', { path: 'manifest.json', field: 'bundleVersion' });
   const at = { path: 'manifest.json', field: 'freeze' };
   if (record.freeze.state !== 'known' || record.gaps.some(gap => gap.kind === 'journal-missing' &&
     gap.at.path === 'manifest.json' && gap.at.field === 'journal')) c.fail('seed-freeze', at);

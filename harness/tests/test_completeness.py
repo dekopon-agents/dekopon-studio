@@ -117,6 +117,15 @@ class CompletenessTest(unittest.TestCase):
         self.driver["processes"]["gateway"] = {"signal": "SIGTERM", "forcedKill": True, "exitCode": -9}
         self.assertEqual(self.codes(), ["process_failure"])
 
+    def test_successful_exit_without_sigterm_is_a_process_failure(self):
+        for signal in (None, 'SIGINT', 'absent'):
+            with self.subTest(signal=signal):
+                process = self.driver['processes']['gateway']
+                process['signal'] = signal
+                if signal == 'absent':
+                    del process['signal']
+                self.assertEqual(self.codes(), ['process_failure'])
+
     def test_scripted_model_deviation_is_a_fixture_violation(self):
         self.driver["fixtures"]["model"]["violations"] = ["request 3: beyond the 3 scripted completions"]
         self.assertEqual(self.codes(), ["fixture_violation"])
@@ -150,6 +159,36 @@ class ContinuityTest(unittest.TestCase):
             synthetic.span("c3" * 16, "3000000000000001", "", "gateway.message", 0, 10),
             synthetic.span("c3" * 16, "3000000000000002", "3000000000000001", "prompt.session", 0, 10),
         ]
+
+    def segments(self):
+        encoded = json.dumps([{"role": "user", "content": "synthetic segmented prompt"}])
+        chunks = [encoded[:17], encoded[17:]]
+        return [synthetic.event("agent.model.prompt", index + 1, {
+            "audit.event": "agent.model.prompt", "model.turn": 1, "transcript.scope": "full",
+            "message.count": 1, "transcript.segment": index + 1, "transcript.segments": 2,
+            "messages": chunk}) for index, chunk in enumerate(chunks)]
+
+    def test_out_of_order_segments_form_one_continuous_prompt(self):
+        spans = self.anchor() + [self.turn("3000000000000003", self.segments()[::-1])]
+        prompts = self.prompts(spans)
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(prompts[0].messages, [{"role": "user", "content": "synthetic segmented prompt"}])
+        self.assertEqual(evidence.continuity_gaps(prompts), [])
+
+    def test_missing_duplicate_or_inconsistent_segments_are_gaps(self):
+        for defect in ("missing", "duplicate", "count", "scope", "turn"):
+            with self.subTest(defect=defect):
+                events = self.segments()
+                if defect == "missing":
+                    events.pop()
+                elif defect == "duplicate":
+                    events[1]["attributes"] = events[0]["attributes"]
+                else:
+                    key = {"count": "message.count", "scope": "transcript.scope", "turn": "model.turn"}[defect]
+                    events[1]["attributes"] = [a for a in events[1]["attributes"] if a["key"] != key] + synthetic.attributes({key: "other"})
+                prompts = self.prompts(self.anchor() + [self.turn("3000000000000003", events)])
+                self.assertIsNone(prompts[0].messages)
+                self.assertEqual(len(evidence.continuity_gaps(prompts)), 1)
 
     def test_full_then_deltas_is_continuous(self):
         message = {"role": "user", "content": "m"}

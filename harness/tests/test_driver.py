@@ -56,7 +56,6 @@ class JournalCopyTest(unittest.TestCase):
             self.assertEqual([p.relative_to(attempt.path("journal")).as_posix()
                               for p in attempt.path("journal").rglob("*") if p.is_file()],
                              ["evalgw-agent/conversation.jsonl"])
-            # Manifest enumeration also excludes non-transcript siblings without reading them.
             attempt.path("journal/non-journal-state").write_text("synthetic unrelated state")
             self.assertEqual([ref["path"] for ref in attempt.journal_files()],
                              ["journal/evalgw-agent/conversation.jsonl"])

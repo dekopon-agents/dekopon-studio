@@ -27,8 +27,11 @@ def _regrade(root: Path) -> dict[str, Any]:
         driver = json.loads((root / "driver.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return _infrastructure(f"bundle unreadable: {error}")
-    if not isinstance(manifest, dict) or manifest.get("bundleVersion") != 1 or manifest.get("kind") != "trial":
-        return _infrastructure("not a version 1 trial bundle")
+    if not isinstance(manifest, dict) or manifest.get("bundleVersion") not in (1, 2) or manifest.get("kind") != "trial":
+        return _infrastructure("not a supported trial bundle")
+    if manifest["bundleVersion"] == 2 and (manifest.get("seedDigest") != driver.get("seed", {}).get("digest") or
+            manifest.get("armId") != driver.get("seed", {}).get("armId")):
+        return _infrastructure("seeded trial identity does not match its driver evidence")
     for reference in _references(manifest):
         relative = PurePosixPath(reference["path"])
         if relative.is_absolute() or ".." in relative.parts:
@@ -37,7 +40,7 @@ def _regrade(root: Path) -> dict[str, Any]:
         if not path.is_file() or sha256(path) != reference["sha256"]:
             return _infrastructure(f"{reference['path']} does not match its manifest hash")
     try:
-        scenarios.validate(scenario)
+        scenarios.validate(scenario, allow_empty=manifest["bundleVersion"] == 2)
     except scenarios.ScenarioError as error:
         return _infrastructure(f"scenario invalid: {error}")
     result, export = completeness.check(root, len(scenario["messages"]), driver)

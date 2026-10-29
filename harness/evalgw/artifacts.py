@@ -43,6 +43,12 @@ DEKOPON = Pinned(
     source={"repository": "dekopon-agents/dekopon", "commit": DEKOPON_COMMIT},
 )
 PROVIDERS = {
+    "decide": Pinned(
+        name="decide-provider.wasm", version="0.1.1",
+        url="https://github.com/dekopon-agents/dekopon-provider-decide/releases/download/v0.1.1/decide-provider.wasm",
+        sha256="213b9af80617848d77ae0b7d6063a5ca359dc8f9d4fd63203885fe3eff94e216",
+        source={"repository": "dekopon-agents/dekopon-provider-decide", "commit": "8830dcb5cde8b59f9727bcb9ebb22daf88fc0716"},
+    ),
     "gh": Pinned(
         name="gh-provider.wasm",
         version="0.10.0",

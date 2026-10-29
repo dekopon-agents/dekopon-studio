@@ -13,10 +13,10 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
   const bytes = files.get(root.path);
   if (!bytes) c.fail('manifest-shape', root);
   const m = object(parse(decode(bytes, c, root), c, root), c, root, 'manifest-shape');
-  if (m.bundleVersion !== 1n) c.fail('bundle-version', field(root, 'bundleVersion'));
+  if (m.bundleVersion !== 1n && m.bundleVersion !== 2n) c.fail('bundle-version', field(root, 'bundleVersion'));
   if (m.kind !== 'trial') c.fail('manifest-shape', field(root, 'kind'));
   unknownFields(m, ['bundleVersion', 'kind', 'attempt', 'scenario', 'dekopon', 'providers', 'collector',
-    'trace', 'logs', 'journal', 'freeze', 'config', 'stdout', 'driver', 'completeness', 'grade', 'gaps', 'seedDigest'], c, root);
+    'trace', 'logs', 'journal', 'freeze', 'config', 'stdout', 'driver', 'completeness', 'grade', 'gaps', 'seedDigest', ...(m.bundleVersion === 2n ? ['armId'] : [])], c, root);
   const references: FileReference[] = [];
   async function ref(value: Value | undefined, at: Location, format = false): Promise<string | undefined> {
     if (value === undefined || value === null) { c.gap('missing-file', at); return; }
@@ -81,12 +81,23 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
     attempt: (v, at) => metadata(v, at, { id: string, startedAt: string, finishedAt: nullable(string) }),
     providers: list((v, at) => metadata(v, at, { id: string, name: string, version: string, source, sha256: string })),
     collector: (v, at) => metadata(v, at, { image: string, exitCode: nullable(signed), forcedKill: boolean }),
-    seedDigest: (v, at) => { if (v !== null) c.fail('manifest-shape', at); return null; },
+    seedDigest: (v, at) => {
+      if (m.bundleVersion === 1n) { if (v !== null) c.fail('manifest-shape', at); return null; }
+      const digest = text(v, c, at, 'manifest-shape');
+      if (!/^[a-f0-9]{64}$/.test(digest)) c.fail('manifest-shape', at);
+      return digest;
+    },
   };
   for (const [key, decoder] of Object.entries(identityDecoders)) {
     const at = field(root, key);
     if (m[key] === undefined) c.gap('bundle-evidence', at, { attribute: key });
     else identity[key] = decoder(m[key], at);
+  }
+  if (m.bundleVersion === 2n) {
+    if (m.seedDigest === undefined) c.fail('manifest-shape', field(root, 'seedDigest'));
+    const arm = text(m.armId, c, field(root, 'armId'), 'manifest-shape');
+    if (!arm.length) c.fail('manifest-shape', field(root, 'armId'));
+    identity.armId = arm;
   }
   let freeze: ChatRecord['freeze'];
   if (m.freeze === null || m.freeze === undefined) freeze = c.unknown('freeze', field(root, 'freeze'));
@@ -170,7 +181,7 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
   const policyBytes = policyRef && files.get(policyRef.path);
   const policy = policyBytes ? known(decode(policyBytes, c, { path: policyRef!.path }))
     : c.unknown<string>('permission-evidence', { path: 'manifest.json', field: 'config.policies' });
-  return { trace, logs, journals, record: { readerVersion: 4, bundleVersion: 1, dekoponVersion,
+  return { trace, logs, journals, record: { readerVersion: 5, bundleVersion: m.bundleVersion === 2n ? 2 : 1, dekoponVersion,
     references, identity, freeze, completeness, messages: [], unanchoredCalls: [], toolSets: [], journals: [],
     summaryCalls: [], evidence: [], spans: [], admissions: [], replays: [], mailbox: {
       steers: c.unknown('mailbox-inventory-unavailable', { path: 'trace/traces.jsonl', field: 'steers' }),
@@ -179,6 +190,6 @@ export async function bundle(files: ReadonlyMap<string, Uint8Array>, c: Context)
       completingInterval: c.unknown('mailbox-state-unavailable', { path: 'trace/traces.jsonl', field: 'COMPLETING interval' }),
     }, permissions: { policy, world: { state: 'unknown', gap: c.gap('policy-world-unavailable',
       { path: 'manifest.json', field: 'providers' }, { attribute: 'provider-inventory',
-        detail: 'Bundle v1 has provider pins and runtime paths, not the complete loaded capability inventory. Successful what-if evaluation waits for a core export.' }) },
+        detail: 'Trial bundles have provider pins and runtime paths, not the complete loaded capability inventory. Successful what-if evaluation waits for a core export.' }) },
       decisions: [], effects: [], turns: [] }, gaps: c.gaps, notes: c.notes } };
 }

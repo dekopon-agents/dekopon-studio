@@ -1,8 +1,9 @@
 """Scenario data and the ordinary Dekopon configuration it assembles into.
 
 A scenario is JSON data: catalog agent, broker capabilities/settings, Cedar policy lines, route
-settings, ordered messages, scripted completions, fixture routes and grading rules. It carries no
-code and no external URL. The only substitutions are the attempt's own loopback values, written as
+settings, ordered messages, scripted completions, fixture routes and grading rules. Configuration
+URLs are restricted to fixture substitutions; message text is transported verbatim. Substitutions
+are the attempt's own loopback values, written as
 `{{service.authority}}`, `{{service.origin}}`, `{{principal}}` and `{{agent}}`.
 """
 
@@ -32,7 +33,7 @@ COMPLETION_PREDICATES = {"lastUserContains", "toolContains", "historyContains"}
 
 # Where each pinned provider takes its origin. A scenario may use a provider only when that origin is
 # the attempt's loopback service: the gh provider falls back to api.github.com when baseUrl is absent.
-FIXTURE_ENDPOINTS = {"gh": "baseUrl"}
+FIXTURE_ENDPOINTS = {"gh": "baseUrl", "decide": "baseUrl"}
 BROKER_KEYS = {"capabilities", "providerSettings", "strict"}
 # Paths, provider selection, identities and telemetry belong to assembly alone, so the bundle's
 # recorded policy and provider artifacts are always the ones the broker reads.
@@ -109,13 +110,33 @@ def request_line(scenario: dict[str, Any], text: str) -> bytes:
     return line
 
 
-def validate(scenario: dict[str, Any]) -> None:
+def _validate_messages(scenario: dict[str, Any], *, allow_empty: bool) -> None:
+    messages = scenario["messages"]
+    if not isinstance(messages, list):
+        raise ScenarioError("messages must be a list")
+    if not messages and not allow_empty:
+        raise ScenarioError("scenario sends no messages")
+    for index, message in enumerate(messages, 1):
+        if not isinstance(message, dict) or not isinstance(message.get("text"), str):
+            raise ScenarioError(f"message {index} must have text as a string")
+        try:
+            text_bytes = len(message["text"].encode())
+        except UnicodeError:
+            raise ScenarioError(f"message {index} is not valid Unicode") from None
+        if text_bytes > MAX_TEXT_BYTES:
+            raise ScenarioError(f"message {index} exceeds {MAX_TEXT_BYTES} bytes")
+        if len(request_line(scenario, message["text"])) > MAX_LINE_BYTES:
+            raise ScenarioError(f"message {index} request line exceeds {MAX_LINE_BYTES} bytes")
+
+
+def validate(scenario: dict[str, Any], *, allow_empty: bool = False) -> None:
     missing = [key for key in REQUIRED if key not in scenario]
     if missing:
         raise ScenarioError(f"scenario lacks {missing}")
     if scenario["scenarioVersion"] != SCENARIO_VERSION:
         raise ScenarioError(f"scenarioVersion must be {SCENARIO_VERSION}")
-    for text in _strings(scenario):
+    configuration = {key: value for key, value in scenario.items() if key not in ("messages", "continuationMessages")}
+    for text in _strings(configuration):
         if "://" in text:
             raise ScenarioError(f"scenario names a URL ({text[:60]!r}); use {{{{service.origin}}}}")
     if not isinstance(scenario["providers"], list) or not all(isinstance(p, str) for p in scenario["providers"]):
@@ -125,14 +146,7 @@ def validate(scenario: dict[str, Any]) -> None:
     )
     if problems:
         raise ScenarioError("; ".join(problems))
-    if not scenario["messages"]:
-        raise ScenarioError("scenario sends no messages")
-    for index, message in enumerate(scenario["messages"], 1):
-        text = message["text"]
-        if len(text.encode()) > MAX_TEXT_BYTES:
-            raise ScenarioError(f"message {index} exceeds {MAX_TEXT_BYTES} bytes")
-        if len(request_line(scenario, text)) > MAX_LINE_BYTES:
-            raise ScenarioError(f"message {index} request line exceeds {MAX_LINE_BYTES} bytes")
+    _validate_messages(scenario, allow_empty=allow_empty)
     for index, entry in enumerate(scenario["model"]["completions"]):
         unknown = set(entry.get("expect", {})) - COMPLETION_PREDICATES
         respond = entry.get("respond", {})
@@ -236,7 +250,6 @@ def assemble(
                 **route,
             }
         ],
-        # Journal-backed sessions keep both stores inside the private runtime.
         "sessions": {
             **scenario["gateway"].get("sessions", {}),
             "journal": {"path": str(runtime / "journal")},
@@ -245,6 +258,9 @@ def assemble(
         "shutdownGraceMs": scenario["gateway"].get("shutdownGraceMs", 15000),
         "telemetry": {**telemetry, "serviceName": "dekopon-gatewayd"},
     }
+    if "summaries" in scenario["model"]:
+        gateway["models"].append({**gateway["models"][0], "name": "evalgw-summary",
+                                  "model": scenario["model"]["summaries"]["model"], "classes": []})
     return {"catalog": catalog, "policies": policies, "broker": broker, "gateway": gateway}
 
 

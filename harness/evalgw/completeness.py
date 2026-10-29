@@ -109,6 +109,16 @@ def collector_errors(log: Path) -> list[Reason]:
     return reasons
 
 
+def projection_failures(driver: dict[str, Any]) -> list[Reason]:
+    if "seed" not in driver:
+        return []
+    comparison = driver.get("firstProjection") or {}
+    if comparison.get("status") == "matched":
+        return []
+    code = "first_projection_mismatch" if comparison.get("status") == "mismatch" else "first_projection_unavailable"
+    return [Reason(code, comparison.get("reason") or "seeded trial lacks a first-projection comparison")]
+
+
 def driver_failures(driver: dict[str, Any] | None, sent: int) -> list[Reason]:
     if driver is None:
         return [Reason("driver_record_missing", "driver.json was not written")]
@@ -120,6 +130,8 @@ def driver_failures(driver: dict[str, Any] | None, sent: int) -> list[Reason]:
             reasons.append(Reason("process_failure", f"{name} was killed after its shutdown deadline"))
         elif process.get("exitCode") != 0:
             reasons.append(Reason("process_failure", f"{name} exited {process.get('exitCode')!r}"))
+        elif name == "gateway" and process.get("signal") != "SIGTERM":
+            reasons.append(Reason("process_failure", "gateway has no recorded SIGTERM drain"))
     for name in ("gateway", "broker", "collector"):
         if name not in (driver.get("processes") or {}):
             reasons.append(Reason("process_failure", f"{name} has no recorded exit"))
@@ -129,6 +141,11 @@ def driver_failures(driver: dict[str, Any] | None, sent: int) -> list[Reason]:
     for fixture, record in sorted((driver.get("fixtures") or {}).items()):
         for item in record.get("violations", []):
             reasons.append(Reason("fixture_violation", f"{fixture}: {item}"))
+    seed = driver.get("seed", {})
+    original = seed.get("completeness", {})
+    if original.get("state") == "known" and original.get("value", {}).get("status") == "incomplete":
+        reasons.append(Reason("seed_incomplete", "the captured source trial was incomplete"))
+    reasons.extend(projection_failures(driver))
     return reasons
 
 

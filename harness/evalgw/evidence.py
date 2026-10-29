@@ -90,19 +90,23 @@ def _session(event: Event, spans: dict[tuple[str, str], Span]) -> str:
     return f"{event.trace_id}/{event.span_id}"
 
 
-def _prompt(event: Event, spans: dict[tuple[str, str], Span]) -> Prompt:
-    messages = event.attributes.get("messages")
-    candidate = embedded_json(messages)
-    decoded = candidate if isinstance(candidate, list) else None
-    scope = event.attributes.get("transcript.scope")
-    return Prompt(
-        session=_session(event, spans),
-        turn=decimal(event.attributes.get("model.turn")),
-        scope=scope if isinstance(scope, str) else None,
-        count=decimal(event.attributes.get("message.count")),
-        messages=decoded,
-        event=event,
-    )
+def _prompt(events: list[Event], spans: dict[tuple[str, str], Span]) -> Prompt:
+    first = events[0]
+    scope = first.attributes.get("transcript.scope")
+    count = decimal(first.attributes.get("message.count"))
+    turn = decimal(first.attributes.get("model.turn"))
+    segmented = any("transcript.segment" in e.attributes or "transcript.segments" in e.attributes for e in events)
+    total = decimal(first.attributes.get("transcript.segments")) if segmented else 1
+    pieces = sorted(events, key=lambda e: decimal(e.attributes.get("transcript.segment")) or 0)
+    valid = total == len(pieces) and all(
+        (not segmented or decimal(e.attributes.get("transcript.segment")) == index + 1 and
+         decimal(e.attributes.get("transcript.segments")) == total) and
+        e.attributes.get("transcript.scope") == scope and decimal(e.attributes.get("message.count")) == count and
+        decimal(e.attributes.get("model.turn")) == turn and isinstance(e.attributes.get("messages"), str)
+        for index, e in enumerate(pieces))
+    candidate = embedded_json("".join(e.attributes["messages"] for e in pieces)) if valid else None
+    return Prompt(session=_session(first, spans), turn=turn, scope=scope if isinstance(scope, str) else None,
+                  count=count, messages=candidate if isinstance(candidate, list) else None, event=first)
 
 
 def messages(export: Export) -> list[Message]:
@@ -117,12 +121,13 @@ def messages(export: Export) -> list[Message]:
         message = Message(ordinal=ordinal, anchor=anchor)
         ordered.append(message)
         by_trace[anchor.trace_id] = message
+    prompts: dict[tuple[str, str], list[Event]] = {}
     for event in export.events():
         message = by_trace.get(event.trace_id)
         if message is None:
             continue
         if event.kind == PROMPT_EVENT:
-            message.prompts.append(_prompt(event, spans))
+            prompts.setdefault((event.trace_id, event.span_id), []).append(event)
         elif event.kind == ANSWER_EVENT:
             message.answers.append(event)
         elif event.kind == SELECTION_EVENT:
@@ -136,6 +141,8 @@ def messages(export: Export) -> list[Message]:
                 script = Script(call, event.time)
                 message.scripts.append(script)
             script.output, script.has_output = event.attributes.get("output"), True
+    for (trace_id, _), events in prompts.items():
+        by_trace[trace_id].prompts.append(_prompt(events, spans))
     for span in sorted(export.spans, key=lambda span: span.start):
         message = by_trace.get(span.trace_id)
         if message is not None and span.name == SHELL_SPAN:
