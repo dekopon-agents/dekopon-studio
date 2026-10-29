@@ -40,7 +40,21 @@ the cursor. Reduced-motion preferences disable step animation.
 At Dekopon v0.70.0, admissions export combined mailbox depth but not queue
 inventories or exact RUNNING/COMPLETING intervals. Those remain explicitly unknown.
 Summary-engine inputs also remain unavailable; summary transitions and observed
-text are shown. Policy evaluation and seed export are later parts.
+text are shown. Policy evaluation is a separate part.
+
+## Exporting a seed
+
+With a validated captured freeze, check **Use captured freeze for seed**, add
+continuation messages in send order, and choose **Export seed**. The browser
+downloads `dekopon-seed-v1.json` and displays the SHA-256 digest of its exact bytes.
+The seed preserves the manifest and present referenced files byte-for-byte;
+missing evidence stays a gap. A bundle without a validated freeze cannot be seeded.
+Moving the timeline cursor does not change the captured freeze.
+
+Choose **Open seed** to verify that file locally, inspect its frozen record and
+edit its continuation messages. Nothing is uploaded. The format and digest
+contract for eval-gateway consumers is [harness/SEED.md](harness/SEED.md).
+`npm run check:seed` checks download and reopen with zero additional requests.
 
 The app uses bundled code and system fonts. Viewer data must stay in the browser.
 Only synthetic fixtures may enter this repository.
