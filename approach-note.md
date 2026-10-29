@@ -5,11 +5,13 @@ Base: `057d51341a80f1fe630de5978e2649edd875340f`.
 Steering: xrl/agents `7a5ceaf641b3516be8cfe7b2ff0769ad6690f598`, first line:
 `# Steering for GPT executors`.
 
-**Status: contract stop, before implementation.** The v0.70.0 projection cannot
-express the five requested arms through the permitted knobs alone. This note
-preserves the findings and the conditional implementation approach for the
-coordinator's Astra note review. It does not redefine an arm, authorize a core
-change, or claim acceptance. Pin implementation also waits for that review.
+**Status: Astra note r1 ACCEPT; coordinator ruling received 2026-10-29T04:45Z.**
+The review accepts the stop, not the blocked mappings. The coordinator authorizes
+pin implementation now and narrows the later arms part to three expressible
+policies. Originals-only and prefixes-only are one follow-up for a later drop,
+requiring a gatewayd projection selector/core export outside this step. No core
+change, authority expansion or new memory key is authorized. Arms starts from
+current main after pin merges.
 
 ## Conflicts and readings
 
@@ -63,13 +65,18 @@ All following paths are in that commit under `crates/dekopon-gatewayd/src/`:
   obtained before projection but persisted after the reply; it is not injected
   into the frozen header used by that first projection.
 
-| Named arm | Mapping assessment at v0.70.0 |
+| Ruled arm | Exact v0.70.0 knob mapping |
 | --- | --- |
-| originals-only | No valid mapping: high `hotTurns` still prefixes results, cannot disable that behavior, and cannot produce the stipulated whole-original omission. `summaries: off` changes only future plans. |
-| prefixes-only | Native prefix replay exists, but it cannot be independently selected against whole originals, and frozen older summaries remain eligible. No valid mapping satisfying all arm contracts. |
-| summaries-only | Lowering `hotTurns` to 1 makes older unpinned, unchosen records prefer their generated summaries, but keeps the newest record native. Zero is invalid; parts/model changes cannot select another frozen rung. No literal summaries-only mapping. |
-| live policy | Preserve the seed's effective hotTurns, summaries and selection unchanged. |
-| decider | Preserve hotTurns and summaries; set `selection: {decider: {capability: "decide.choose", backend: "openrouter-jev", model: "typesafe/jev-1.13", requireProbabilities: true}}`. A fresh first projection still uses stored rungs; new decisions affect a later projection/repack. |
+| live-policy | The seed's hotTurns, summaries and selection unchanged. |
+| decider | The seed's hotTurns and summaries unchanged; selection becomes `{decider: {capability: "decide.choose", backend: "openrouter-jev", model: "typesafe/jev-1.13", requireProbabilities: true}}` against a loopback stub. The decider provider is in the common seed's provider set and grant for every arm. A fresh first projection uses frozen stored rungs; a new choice affects a later projection/repack. |
+| summaries-preferred | Set hotTurns to 1; preserve the seed's summaries and selection. Older unpinned, unchosen records prefer their deepest generated summary and the newest stays native. Never call this summaries-only. |
+| originals-only and prefixes-only (deferred together) | No mapping in this step. A gatewayd projection selector is a config-key and contract change for a later drop/core export. |
+
+First-projection checks compare each of the three active arms against its actual
+knob-selected v0.70.0 projection. Name WindowFit omissions as WindowFit; do not
+require or fabricate a record-exceeds-budget result. This implements the
+coordinator's narrowing of the arm list, not a reinterpretation of the two
+deferred policies.
 
 The decider provider must already be in the common seed's provider set and grant,
 including arms that never invoke it; adding it to one arm would change authority.
@@ -79,9 +86,9 @@ and `/api/alpha/decisions`. Reuse the harness HTTP Service seam for a loopback P
 stub returning a valid declared-label distribution. Never use its default vendor
 endpoint, configure a credential, or make a paid call.
 
-These findings trigger the brief's explicit stop: an arm needs more than the
-three allowed knobs. The coordinator must resolve the contract before build;
-this note does not select a replacement policy or a different daemon version.
+The findings above explain the original stop. The coordinator ruling resolves
+it by authorizing the three active arms and deferring the other two together.
+The required daemon pin remains v0.70.0.
 
 ## Pin part after review
 
@@ -166,8 +173,8 @@ native prefix sizes, envelopes, cumulative summary parts, budgets, grant and age
 eligibility; do not infer success merely from aggregate rung counts or a stub
 answer. Missing/ambiguous evidence or a mismatch is an incomplete reason before
 grading, with score null. No continuations means an explicit no-first-projection
-observation. The required originals-only omission cannot be supplied under the
-current pin, as documented above; it is not fabricated as a successful result.
+observation. WindowFit omissions are named as such. The originals-only/prefixes-only
+comparison is deferred with their shared projection-selector follow-up.
 
 ## Reference seed and validation, conditional on resolution
 
@@ -179,7 +186,7 @@ fixture's small provider output is not evidence for this large-output scenario.
 Verify the produced journal captured the intended result size and generated
 summary parts before allowing freeze/export; never hand-write or patch its
 journal. Use `exportSeed` to produce the same bytes/layout as Studio, then run the
-five arms from that one file once valid mappings are authorized.
+three ruled arms from that one file after pin merges.
 
 Planned meaningful tests: importer acceptance/refusal for unsafe path, bad base64,
 null/missing frozen journal, unknown-field note and exact-byte digest; staging
@@ -201,3 +208,10 @@ built-Studio opening, CI and coordinator-launched external reviews. Node 24.19.0
 npm 11.9.0, Python 3.12 and the Docker CLI are present; daemon/Docker execution
 and complete Rust/wasm prerequisites have not been exercised. No Pi/deploy check
 belongs to this work. No implementation, tag, merge, release or deployment was made.
+
+## Inherited follow-up
+
+Astra note r1 found that the existing harness launches brokerd and gatewayd under
+the same operator UID and therefore does not exercise core's separate-UID
+isolation boundary. The coordinator explicitly excludes changing launch UIDs
+from this step. List this inherited issue under Follow-ups in the pin PR body.
