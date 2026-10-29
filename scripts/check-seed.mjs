@@ -11,8 +11,10 @@ await test('seed download and reopening round-trip the freeze and continuations 
   const scratch = await mkdtemp(join(tmpdir(), 'studio-seed-'));
   try {
     const frozen = join(scratch, 'frozen'), unfrozen = join(scratch, 'unfrozen');
+    const captured = studioFixture();
+    captured.fileOverrides.set('stdout/gateway.stderr', new Uint8Array(4 * 1024 * 1024).fill(128));
     const missing = studioFixture(); missing.extraManifest.freeze = null;
-    for (const [directory, fixture] of [[frozen, studioFixture()], [unfrozen, missing]]) {
+    for (const [directory, fixture] of [[frozen, captured], [unfrozen, missing]]) {
       for (const [path, bytes] of await fixture.files()) {
         const target = join(directory, path);
         await mkdir(dirname(target), { recursive: true }); await writeFile(target, bytes);

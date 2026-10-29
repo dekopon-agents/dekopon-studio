@@ -72,3 +72,15 @@ test.each([
   const seed = await envelope(); mutate(seed);
   expect(await readSeed(encoder.encode(JSON.stringify(seed)))).toMatchObject({ ok: false, errors: [{ kind }] });
 });
+
+test('seed round-trip preserves multi-megabyte binary files without a parser stack limit', async () => {
+  const fixture = studioFixture();
+  const binary = Uint8Array.from({ length: 4 * 1024 * 1024 }, (_, i) => i % 256);
+  fixture.fileOverrides.set('stdout/gateway.stderr', binary);
+  const exported = await exportSeed(await fixture.files(), []);
+  if (!exported.ok) throw new Error(JSON.stringify(exported.errors));
+  const restored = await readSeed(exported.bytes);
+  expect(restored.ok).toBe(true);
+  if (!restored.ok) throw new Error(JSON.stringify(restored.errors));
+  expect(Buffer.from(restored.files.get('stdout/gateway.stderr')!).equals(Buffer.from(binary))).toBe(true);
+});

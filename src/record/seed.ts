@@ -65,7 +65,7 @@ export async function readSeed(input: Uint8Array): Promise<ReadSeedResult> {
       const path = text(o.path, c, field(at, 'path'), 'seed-shape');
       if (!validBundlePath(path) || files.has(path)) c.fail('bundle-path', field(at, 'path'));
       const encoded = text(o.base64, c, field(at, 'base64'), 'seed-shape');
-      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))
+      if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
         c.fail('seed-base64', field(at, 'base64'));
       const decoded = Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0));
       if (base64(decoded) !== encoded) c.fail('seed-base64', field(at, 'base64'));
