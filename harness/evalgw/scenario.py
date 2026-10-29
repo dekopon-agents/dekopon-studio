@@ -32,7 +32,7 @@ COMPLETION_PREDICATES = {"lastUserContains", "toolContains", "historyContains"}
 
 # Where each pinned provider takes its origin. A scenario may use a provider only when that origin is
 # the attempt's loopback service: the gh provider falls back to api.github.com when baseUrl is absent.
-FIXTURE_ENDPOINTS = {"gh": "baseUrl"}
+FIXTURE_ENDPOINTS = {"gh": "baseUrl", "decide": "baseUrl"}
 BROKER_KEYS = {"capabilities", "providerSettings", "strict"}
 # Paths, provider selection, identities and telemetry belong to assembly alone, so the bundle's
 # recorded policy and provider artifacts are always the ones the broker reads.
@@ -109,7 +109,7 @@ def request_line(scenario: dict[str, Any], text: str) -> bytes:
     return line
 
 
-def validate(scenario: dict[str, Any]) -> None:
+def validate(scenario: dict[str, Any], *, allow_empty: bool = False) -> None:
     missing = [key for key in REQUIRED if key not in scenario]
     if missing:
         raise ScenarioError(f"scenario lacks {missing}")
@@ -125,7 +125,7 @@ def validate(scenario: dict[str, Any]) -> None:
     )
     if problems:
         raise ScenarioError("; ".join(problems))
-    if not scenario["messages"]:
+    if not scenario["messages"] and not allow_empty:
         raise ScenarioError("scenario sends no messages")
     for index, message in enumerate(scenario["messages"], 1):
         text = message["text"]
@@ -236,7 +236,6 @@ def assemble(
                 **route,
             }
         ],
-        # Journal-backed sessions keep both stores inside the private runtime.
         "sessions": {
             **scenario["gateway"].get("sessions", {}),
             "journal": {"path": str(runtime / "journal")},
@@ -245,6 +244,9 @@ def assemble(
         "shutdownGraceMs": scenario["gateway"].get("shutdownGraceMs", 15000),
         "telemetry": {**telemetry, "serviceName": "dekopon-gatewayd"},
     }
+    if "summaries" in scenario["model"]:
+        gateway["models"].append({**gateway["models"][0], "name": "evalgw-summary",
+                                  "model": scenario["model"]["summaries"]["model"], "classes": []})
     return {"catalog": catalog, "policies": policies, "broker": broker, "gateway": gateway}
 
 

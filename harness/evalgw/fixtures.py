@@ -69,7 +69,7 @@ class _Server(http.server.ThreadingHTTPServer):
 class Fixture:
     """A loopback HTTP server whose handler is `respond(method, path, body) -> (status, json)`."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, port: int = 0) -> None:
         self.name = name
         self.requests: list[dict[str, Any]] = []
         self.violations: list[str] = []
@@ -101,7 +101,7 @@ class Fixture:
 
             do_GET = do_POST = _serve
 
-        self.server = _Server(("127.0.0.1", 0), Handler)
+        self.server = _Server(("127.0.0.1", port), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, name=f"evalgw-{name}", daemon=True)
 
     @property
@@ -131,9 +131,13 @@ class Fixture:
 class StubModel(Fixture):
     """Serves the scenario's completions in order: bounded, non-streaming, no API key."""
 
-    def __init__(self, completions: list[dict[str, Any]]) -> None:
-        super().__init__("model")
+    def __init__(self, completions: list[dict[str, Any]], *, port: int = 0,
+                 summaries: dict[str, Any] | None = None) -> None:
+        super().__init__("model", port)
         self.completions = completions
+        self.summaries = summaries
+        self.main_count = 0
+        self.summary_count = 0
 
     def respond(self, method: str, path: str, raw: bytes) -> tuple[int, Any]:
         index = len(self.requests)
@@ -142,18 +146,31 @@ class StubModel(Fixture):
         if method != "POST" or path != MODEL_PATH:
             self.violations.append(f"request {index}: unexpected {method} {path}")
             return 404, {"error": "unexpected model request"}
-        if index >= len(self.completions):
-            self.violations.append(f"request {index}: beyond the {len(self.completions)} scripted completions")
-            return 500, {"error": "no scripted completion"}
         try:
             request = json.loads(raw)
             messages = request["messages"]
         except (ValueError, KeyError, TypeError, RecursionError):
             self.violations.append(f"request {index}: not a chat completion request")
             return 400, {"error": "not a chat completion request"}
+        if self.summaries and request.get("model") == self.summaries["model"]:
+            entry["kind"] = "summary"
+            self.summary_count += 1
+            text = "\n".join(_text(m.get("content")) for m in messages if m.get("role") != "system")
+            answer = self.summaries["defaultAnswer"]
+            for rule in self.summaries.get("responses", []):
+                if rule["inputContains"] in text:
+                    answer = rule["answer"]
+                    break
+            return 200, completion({"answer": answer}, index)
+        script_index = self.main_count
+        self.main_count += 1
+        entry["kind"] = "main"
+        if script_index >= len(self.completions):
+            self.violations.append(f"request {index}: beyond the {len(self.completions)} scripted completions")
+            return 500, {"error": "no scripted completion"}
         entry["messageCount"] = len(messages)
         entry["stream"] = request.get("stream")
-        script = self.completions[index]
+        script = self.completions[script_index]
         failures = unmet(script.get("expect", {}), messages)
         if failures:
             self.violations.extend(f"request {index}: {failure}" for failure in failures)
@@ -162,7 +179,7 @@ class StubModel(Fixture):
 
     def record(self) -> dict[str, Any]:
         record = super().record()
-        served = len(record["requests"])
+        served = self.main_count
         if served < len(self.completions):
             record["violations"].append(f"only {served} of {len(self.completions)} scripted completions were requested")
         return record
@@ -171,8 +188,8 @@ class StubModel(Fixture):
 class Service(Fixture):
     """Exact method and path routes with fixed synthetic JSON; anything else is a 404 violation."""
 
-    def __init__(self, routes: list[dict[str, Any]]) -> None:
-        super().__init__("service")
+    def __init__(self, routes: list[dict[str, Any]], *, port: int = 0) -> None:
+        super().__init__("service", port)
         self.routes = {(route["method"], route["path"]): route for route in routes}
 
     def respond(self, method: str, path: str, raw: bytes) -> tuple[int, Any]:
@@ -181,4 +198,18 @@ class Service(Fixture):
         if route is None:
             self.violations.append(f"unexpected {method} {path}")
             return 404, {"message": "Not Found"}
+        if "decisionChoice" in route:
+            try:
+                request = json.loads(raw)
+                labels = list(request["questions"]["decision"]["criteria"])
+                choice = route["decisionChoice"]
+                if choice not in labels or request["model"] != "typesafe/jev-1.13":
+                    raise ValueError("invalid decision fixture input")
+            except (KeyError, TypeError, ValueError):
+                self.violations.append("invalid decision fixture input")
+                return 400, {"error": "invalid decision fixture input"}
+            self.requests[-1].update(kind="decider", labels=labels, choice=choice)
+            return 200, {"model": request["model"], "answers": {"decision": {
+                "type": "choice", "choice": choice,
+                "probabilities": {label: float(label == choice) for label in labels}}}}
         return route.get("status", 200), route["json"]

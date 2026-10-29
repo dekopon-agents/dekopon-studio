@@ -7,5 +7,5 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { files: ['src/**/*.{ts,tsx}'], languageOptions: { globals: globals.browser } },
-  { files: ['*.js', 'scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
+  { files: ['*.js', 'scripts/**/*.mjs', 'harness/**/*.mjs', 'harness/**/*.ts'], languageOptions: { globals: globals.node } },
 ];

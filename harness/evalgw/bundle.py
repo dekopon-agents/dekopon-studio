@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -43,24 +44,34 @@ def write_json(path: Path, value: Any) -> None:
 class Bundle:
     """An attempt directory. Creation is exclusive; nothing here deletes or reuses one."""
 
-    def __init__(self, root: Path, attempt: str, scenario: str, started: str) -> None:
+    def __init__(self, root: Path, attempt: str, scenario: str, started: str, *,
+                 seed_digest: str | None = None, arm_id: str | None = None) -> None:
+        if seed_digest is not None:
+            if not re.fullmatch(r"[a-f0-9]{64}", seed_digest) or not isinstance(arm_id, str) or not arm_id:
+                raise ValueError("seeded bundles require a SHA-256 seed digest and arm id")
+        elif arm_id is not None:
+            raise ValueError("an arm id requires a seed digest")
+        self.seed_digest = seed_digest
+        self.arm_id = arm_id
+        self.version = 2 if seed_digest is not None else BUNDLE_VERSION
         self.root = root
         self.attempt = attempt
         self.scenario = scenario
         self.started = started
 
     @classmethod
-    def create(cls, root: Path, attempt: str, scenario: str) -> "Bundle":
+    def create(cls, root: Path, attempt: str, scenario: str, *,
+               seed_digest: str | None = None, arm_id: str | None = None) -> "Bundle":
+        bundle = cls(root, attempt, scenario, now(), seed_digest=seed_digest, arm_id=arm_id)
         root.mkdir(mode=0o700)  # FileExistsError: an attempt directory is never reused.
         for name in SUBDIRECTORIES:
             (root / name).mkdir(mode=0o700)
-        bundle = cls(root, attempt, scenario, now())
         write_json(root / MANIFEST, bundle.initial_manifest())
         return bundle
 
     def initial_manifest(self) -> dict[str, Any]:
         return {
-            "bundleVersion": BUNDLE_VERSION,
+            "bundleVersion": self.version,
             "kind": "trial",
             "attempt": {"id": self.attempt, "startedAt": self.started, "finishedAt": None},
             "scenario": {"id": self.scenario, "config": None},
@@ -69,6 +80,8 @@ class Bundle:
                 "reasons": [{"code": "not_finalized", "detail": "the attempt has not finished"}],
             },
             "grade": None,
+            "seedDigest": self.seed_digest,
+            **({"armId": self.arm_id} if self.seed_digest is not None else {}),
         }
 
     def path(self, relative: str) -> Path:
@@ -103,7 +116,7 @@ class Bundle:
     ) -> dict[str, Any]:
         journal = self.journal_files()
         manifest = {
-            "bundleVersion": BUNDLE_VERSION,
+            "bundleVersion": self.version,
             "kind": "trial",
             "attempt": {"id": self.attempt, "startedAt": self.started, "finishedAt": now()},
             "scenario": {"id": scenario_id, "config": self.ref("config/scenario.json")},
@@ -135,7 +148,8 @@ class Bundle:
             "completeness": completeness,
             "grade": self.ref("grade.json"),
             "gaps": gaps,
-            "seedDigest": None,
+            "seedDigest": self.seed_digest,
+            **({"armId": self.arm_id} if self.seed_digest is not None else {}),
         }
         write_json(self.root / MANIFEST, manifest)
         return manifest

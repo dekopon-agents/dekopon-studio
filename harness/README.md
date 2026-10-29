@@ -73,13 +73,82 @@ both frozen journal records and the recalled fact in the second call, drives bot
 and requires zero network requests after opening the bundle. CI runs the documented scenario and
 this check after the ordinary browser gates. No bundle contents are sent to a live site.
 
+## Restore a Studio seed and run the ruled arms
+
+Seed operations also require the repository's Node 24.19.0, npm 11.9.0 and `npm ci`.
+`harness/record.mjs` builds an operator adapter into the ignored cache and calls the existing
+`src/record/` importer, journal reconstruction and seed exporter. There is no second seed decoder
+or browser-to-harness import. The adapter is never bundled into the app.
+
+```sh
+python3.12 harness/branch.py --reference --output /tmp/evalgw-reference
+node scripts/check-arms.mjs /tmp/evalgw-reference
+python3.12 harness/branch.py /tmp/evalgw-reference/dekopon-seed-v1.json --output /tmp/evalgw-replay
+```
+
+Each output directory must be new. `--reference` writes `original/`, a Studio-format
+`dekopon-seed-v1.json`, `arms/<arm-id>/`, and `results.json` with every manifest, grade and first
+projection comparison. A supplied seed writes `<arm-id>/` and `results.json` directly under the
+output. Repeat `--arm <id>` to run a subset. Exit statuses match the ordinary runner.
+
+Only synthetic, harness-made v0.70.0 bundles can execute. The importer accepts the Studio seed
+without rewriting its bytes: the digest is SHA-256 of the exact downloaded file, unknown fields
+are noted, and unavailable or unverified frozen journals fail with the importer's typed errors.
+Execution additionally checks the recorded scenario and fixture evidence, pinned daemon/provider
+identities, catalog, Cedar policy, grant, horizon and configuration. It refuses remote endpoints or
+credentials. The common seed must already contain the `decide` provider v0.1.1 and its grant when
+running the decider arm; the owner `providerSettings.decide.baseUrl` points at the loopback fixture.
+This proves compatibility with synthetic exports, not provenance or safety of arbitrary inputs.
+
+Restoration stages every captured journal file verbatim at the fresh gateway's private journal
+root, verifies its hash again immediately before launch, and uses the original conversation.
+Changing timestamps, pins, grants or journal bytes is refused. Only private runtime paths,
+Collector endpoints and authenticated operator UID bindings relocate. Model/provider loopback
+ports are rebound to their recorded values so network grants and endpoints stay unchanged; a busy
+port makes the attempt incomplete. Both daemons retain the inherited launcher UID arrangement.
+
+| Arm | Memory settings relative to the seed |
+| --- | --- |
+| `live-policy` | `hotTurns`, `summaries`, `selection` unchanged |
+| `decider` | Same `hotTurns` and `summaries`; `selection: {decider: {capability: "decide.choose", backend: "openrouter-jev", model: "typesafe/jev-1.13", requireProbabilities: true}}` |
+| `summaries-preferred` | `hotTurns: 1`; same `summaries` and `selection` |
+
+The reference seed has four records, `hotTurns: 2`, two generated summary parts per record and a
+roughly 200 KiB Bash result containing an early synthetic fact. The result uses 1,024 lines inside
+the shell's existing byte and line ceilings. Two later distractor records age the fact out of the
+hot tail. The runner waits for summary publication before freezing, using the Studio journal
+reader. Each arm then receives the seed's two continuation messages in order. The stub decider
+selects metadata with a normalized probability distribution; its first decision is persisted after
+the first reply, so its first projection matches live policy. Later requests may diverge.
+
+`summaries-preferred` keeps the newest record native; older unpinned, unchosen records prefer
+their deepest generated summary. Summary plans were fixed at append: changing `summaries` could
+only affect new records. Native replay still prefixes tool results and WindowFit may omit records.
+Originals-only and prefixes-only are deferred together to a later core projection-selector/export
+contract. No core change or journal edit implements them here.
+
+Each arm writes bundle v2 with `seedDigest` and `armId`; ordinary trials remain v1. The reader's
+record version is v5. Seed v1 still embeds only a bundle v1: seeded trials open in Studio but cannot
+be re-exported as seed v1. Open `original/` and each arm directory in separate Studio tabs, or use
+the built-app check above, which keeps all four tabs open and asserts zero interaction requests.
+
+Before scoring, `driver.json.firstProjection` compares the first actual `model.complete` input
+with a cold projection reconstructed from frozen records under that arm's v0.70.0 knobs. It checks
+the exact replay history, authenticated continuation, projection rung counts and byte count, and
+names every omission (including WindowFit). Each frozen record gets a row. The exported selected-ID
+array may be absent; that observed field stays null, and record attribution is explicitly
+`reconstructed-from-exact-replay`, supported by the whole matching history and aggregate evidence.
+Missing completion/input evidence, an unsupported native item, or a mismatch makes the trial
+incomplete with a null score. Empty continuation lists cannot produce a checked result. Source
+notes, gaps and completeness remain in `driver.seed`; effective model defaults stay unknown.
+
 ## Tests
 
 ```sh
 python3.12 -m unittest discover -s harness/tests -v
 ```
 
-The tests use synthetic OTLP fixtures and in-process loopback fixtures only; they need no daemon,
+After `npm ci`, the tests use the same record adapter, synthetic seed/OTLP fixtures and in-process loopback fixtures only; they need no daemon,
 Docker or network.
 
 ## Harbor

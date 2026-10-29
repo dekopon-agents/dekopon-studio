@@ -132,7 +132,7 @@ export interface PermissionRecord {
   decisions: BrokerDecision[]; effects: BrokerEffect[]; turns: PermissionTurn[];
 }
 export interface ChatRecord {
-  readerVersion: 4; bundleVersion: 1; dekoponVersion: Fact<string>;
+  readerVersion: 5; bundleVersion: 1 | 2; dekoponVersion: Fact<string>;
   references: FileReference[]; identity: { [key: string]: Json };
   freeze: Fact<Json>; completeness: Fact<Json>;
   messages: ChatMessage[]; unanchoredCalls: ModelCall[]; toolSets: ToolSet[]; journals: JournalRecord[];

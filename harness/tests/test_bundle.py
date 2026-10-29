@@ -86,6 +86,27 @@ class BundleTest(unittest.TestCase):
         self.assertEqual(manifest["trace"]["format"], "otlp-jsonl")
         self.assertIsNone(manifest["seedDigest"])
 
+    def test_projection_failure_is_incomplete_and_unscored(self):
+        record = synthetic.driver()
+        record["seed"] = {"digest": "a" * 64, "armId": "live-policy"}
+        record["firstProjection"] = {"status": "mismatch", "reason": "frozen input differs"}
+        manifest, graded = self.finalize(record)
+        self.assertEqual(manifest["completeness"]["status"], "incomplete")
+        self.assertIn("first_projection_mismatch", [r["code"] for r in manifest["completeness"]["reasons"]])
+        self.assertEqual((graded["status"], graded["score"]), ("infrastructure_error", None))
+
+    def test_seeded_placeholder_and_final_manifest_use_version_two(self):
+        attempt = Bundle.create(self.root, "synthetic", "two-message-gh-recall",
+                                seed_digest="a" * 64, arm_id="summaries-preferred")
+        initial = json.loads((self.root / "manifest.json").read_text())
+        self.assertEqual((initial["bundleVersion"], initial["seedDigest"], initial["armId"]),
+                         (2, "a" * 64, "summaries-preferred"))
+        final = attempt.finalize(scenario_id="two-message-gh-recall", dekopon=DEKOPON, providers=[],
+                                 collector={}, freeze=None, loss_signals=[],
+                                 completeness=initial["completeness"], gaps=[])
+        self.assertEqual((final["bundleVersion"], final["seedDigest"], final["armId"]),
+                         (2, "a" * 64, "summaries-preferred"))
+
     def test_failed_attempt_is_kept_incomplete_and_unscored(self):
         record = synthetic.driver()
         record["failure"] = "TimeoutError: local.sock readiness deadline"

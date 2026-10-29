@@ -115,3 +115,14 @@ test.each(['deleted file', 'null journal', 'absent journal reference', 'uncaptur
     expect(await readSeed(encoder.encode(JSON.stringify(seed))))
       .toMatchObject({ ok: false, errors: [{ kind: 'seed-freeze' }] });
   });
+
+test('accepting trial bundle v2 does not widen the unchanged seed-v1 contract', async () => {
+  const fixture = studioFixture();
+  fixture.extraManifest = { bundleVersion: 2, seedDigest: 'a'.repeat(64), armId: 'live-policy' };
+  const files = await fixture.files();
+  expect(await exportSeed(files, [])).toMatchObject({ ok: false, errors: [{ kind: 'seed-shape' }] });
+  const seed = { seedVersion: 1, files: [...files].map(([path, bytes]) => ({ path,
+    base64: Buffer.from(bytes).toString('base64') })), continuationMessages: [] };
+  expect(await readSeed(encoder.encode(JSON.stringify(seed))))
+    .toMatchObject({ ok: false, errors: [{ kind: 'seed-shape' }] });
+});

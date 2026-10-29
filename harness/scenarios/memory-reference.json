@@ -1,0 +1,288 @@
+{
+  "scenarioVersion": 1,
+  "id": "memory-reference",
+  "description": "Synthetic reference: a roughly 200 KiB shell result, a detail question, distracting turns, then a frozen Studio seed for the three ruled arms.",
+  "agent": {
+    "name": "evalgw-agent",
+    "description": "Answers questions about a synthetic repository under broker authority",
+    "enabled": true,
+    "instructions": "Answer from the synthetic conversation. Use the requested bash script when asked to generate the large result.",
+    "modelClass": "reasoning"
+  },
+  "subject": {
+    "external": "tel.10000000001",
+    "principal": "synthetic-user"
+  },
+  "conversation": {
+    "kind": "directMessage",
+    "id": "evalgw"
+  },
+  "providers": [
+    "gh",
+    "decide"
+  ],
+  "broker": {
+    "capabilities": {
+      "gh": {
+        "constraints": {
+          "timeoutMs": 15000,
+          "http": {
+            "allowedHosts": [
+              "{{service.authority}}"
+            ],
+            "allowedMethods": [
+              "GET"
+            ],
+            "maxRequests": 1,
+            "maxRequestBytes": 4096,
+            "maxResponseBytes": 65536,
+            "allowPlaintextLoopback": true
+          }
+        },
+        "capabilities": {
+          "gh.repo.read": {}
+        }
+      },
+      "decide": {
+        "constraints": {
+          "timeoutMs": 15000,
+          "http": {
+            "allowedHosts": [
+              "{{service.authority}}"
+            ],
+            "allowedMethods": [
+              "POST"
+            ],
+            "maxRequests": 1,
+            "maxRequestBytes": 4096,
+            "maxResponseBytes": 65536,
+            "allowPlaintextLoopback": true
+          }
+        },
+        "capabilities": {
+          "decide.choose": {}
+        }
+      }
+    },
+    "providerSettings": {
+      "gh": {
+        "baseUrl": "{{service.origin}}"
+      },
+      "decide": {
+        "baseUrl": "{{service.origin}}"
+      }
+    }
+  },
+  "policies": [
+    "@id(\"evalgw-subject-may-prompt-agent\")",
+    "permit(principal == Dekopon::Principal::\"{{principal}}\",",
+    "       action == Dekopon::Action::\"agent.prompt\",",
+    "       resource == Dekopon::Agent::\"{{agent}}\")",
+    "when { context has via && context.via == \"dekopon-gatewayd\" };",
+    "",
+    "@id(\"evalgw-agent-may-read-repository\")",
+    "permit(principal == Dekopon::Principal::\"{{principal}}\",",
+    "       action == Dekopon::Action::\"gh.repo.read\",",
+    "       resource == Dekopon::Provider::\"gh\")",
+    "when { context has via && context.via == \"dekopon-gatewayd\"",
+    "       && context has agent && context.agent == \"{{agent}}\" };",
+    "",
+    "@id(\"evalgw-agent-may-use-decider\")",
+    "permit(principal == Dekopon::Principal::\"{{principal}}\",",
+    "       action == Dekopon::Action::\"decide.choose\",",
+    "       resource == Dekopon::Provider::\"decide\")",
+    "when { context has via && context.via == \"dekopon-gatewayd\"",
+    "       && context has agent && context.agent == \"{{agent}}\" };"
+  ],
+  "gateway": {
+    "route": {
+      "limits": {
+        "maxSteps": 4,
+        "maxCapabilityCalls": 2
+      },
+      "memory": {
+        "mode": "persistent",
+        "recall": "journal",
+        "hotTurns": 2,
+        "summaries": {
+          "model": "evalgw-summary",
+          "parts": [
+            200,
+            1024
+          ],
+          "maxInputBytes": 262144
+        },
+        "selection": "ladder",
+        "maxTurns": 8,
+        "maxBytes": 65536
+      }
+    },
+    "sessions": {
+      "maxConcurrent": 1
+    },
+    "shutdownGraceMs": 15000
+  },
+  "model": {
+    "model": "evalgw-stub",
+    "completions": [
+      {
+        "expect": {
+          "lastUserContains": "Generate the large synthetic result"
+        },
+        "respond": {
+          "bash": "awk 'BEGIN { print \"EARLY_FACT=ledger-of-tides\"; for (i=0;i<1024;i++) print \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" }'"
+        }
+      },
+      {
+        "expect": {
+          "toolContains": "EARLY_FACT=ledger-of-tides"
+        },
+        "respond": {
+          "answer": "The early fact is ledger-of-tides."
+        }
+      },
+      {
+        "expect": {
+          "lastUserContains": "detail of that result",
+          "historyContains": "EARLY_FACT=ledger-of-tides"
+        },
+        "respond": {
+          "answer": "The early fact was ledger-of-tides; the remainder was padding."
+        }
+      },
+      {
+        "expect": {
+          "lastUserContains": "distractor alpha"
+        },
+        "respond": {
+          "answer": "Distractor alpha concerns synthetic blue pebbles."
+        }
+      },
+      {
+        "expect": {
+          "lastUserContains": "distractor beta"
+        },
+        "respond": {
+          "answer": "Distractor beta concerns synthetic green ribbons."
+        }
+      }
+    ],
+    "summaries": {
+      "model": "evalgw-summary-stub",
+      "defaultAnswer": "A synthetic distracting turn.",
+      "responses": [
+        {
+          "inputContains": "ledger-of-tides",
+          "answer": "EARLY_FACT=ledger-of-tides; the tool result otherwise contained synthetic padding."
+        }
+      ]
+    },
+    "continuations": [
+      {
+        "expect": {
+          "lastUserContains": "early fact",
+          "historyContains": "ledger-of-tides"
+        },
+        "respond": {
+          "answer": "The early fact is ledger-of-tides."
+        }
+      },
+      {
+        "expect": {
+          "lastUserContains": "Repeat that fact",
+          "historyContains": "ledger-of-tides"
+        },
+        "respond": {
+          "answer": "The fact remains ledger-of-tides."
+        }
+      }
+    ]
+  },
+  "service": {
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/repos/synthetic-org/fixture-repo",
+        "status": 200,
+        "json": {
+          "name": "fixture-repo",
+          "full_name": "synthetic-org/fixture-repo",
+          "owner": {
+            "login": "synthetic-org"
+          },
+          "private": false,
+          "visibility": "public",
+          "default_branch": "trunk-synthetic",
+          "fork": false,
+          "archived": false,
+          "description": "Synthetic evalgw fixture: ledger-of-tides",
+          "html_url": "",
+          "created_at": "2026-01-01T00:00:00Z",
+          "pushed_at": "2026-01-02T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/alpha/decisions",
+        "decisionChoice": "metadata"
+      }
+    ]
+  },
+  "messages": [
+    {
+      "text": "Generate the large synthetic result."
+    },
+    {
+      "text": "What was the early detail of that result?"
+    },
+    {
+      "text": "Introduce distractor alpha."
+    },
+    {
+      "text": "Introduce distractor beta."
+    }
+  ],
+  "expect": {
+    "rules": [
+      {
+        "rule": "fact",
+        "message": 1,
+        "allOf": [
+          "ledger-of-tides"
+        ]
+      },
+      {
+        "rule": "fact",
+        "message": 2,
+        "allOf": [
+          "ledger-of-tides"
+        ]
+      }
+    ],
+    "continuationRules": [
+      {
+        "rule": "fact",
+        "message": 1,
+        "allOf": [
+          "ledger-of-tides"
+        ]
+      },
+      {
+        "rule": "fact",
+        "message": 2,
+        "allOf": [
+          "ledger-of-tides"
+        ]
+      }
+    ]
+  },
+  "continuationMessages": [
+    {
+      "text": "What early fact did the large result contain?"
+    },
+    {
+      "text": "Repeat that fact after this continuation."
+    }
+  ]
+}

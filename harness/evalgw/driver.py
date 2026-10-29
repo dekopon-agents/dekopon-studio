@@ -115,11 +115,30 @@ def copy_journal(runtime: Path, bundle: Bundle) -> str:
     return now()
 
 
-def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    scenario = scenarios.load(scenario_path)
+def wait_summaries(runtime: Path, records: int, prior_turns: set[str]) -> None:
+    from .bridge import call
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        snapshot = call("journals", runtime)["records"]
+        if sum(r["turn"] not in prior_turns for r in snapshot) >= records and all(not r["plan"] or
+                all(slot["state"] == "generated" for slot in r["summaries"]) for r in snapshot):
+            return
+        if any(slot["state"] == "error" for r in snapshot for slot in r["summaries"]):
+            raise RuntimeError("Reference summary generation failed; no generated-summary freeze can be claimed")
+        time.sleep(0.1)
+    raise TimeoutError("summary publication deadline before freeze")
+
+
+def run(scenario_path: Path | None, output: Path, cache: Path, *, restored: Any = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    scenario = restored.scenario if restored is not None else scenarios.load(scenario_path)
     attempt = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
-    bundle = Bundle.create(output, attempt, scenario["id"])
-    shutil.copyfile(scenario_path, bundle.path("config/scenario.json"))
+    bundle = Bundle.create(output, attempt, scenario["id"],
+                           seed_digest=restored.seed_digest if restored is not None else None,
+                           arm_id=restored.arm_id if restored is not None else None)
+    if restored is None:
+        shutil.copyfile(scenario_path, bundle.path("config/scenario.json"))
+    else:
+        write_json(bundle.path("config/scenario.json"), scenario)
     os.chmod(bundle.path("config/scenario.json"), 0o600)
 
     runtime = Path(tempfile.mkdtemp(prefix="evalgw-"))
@@ -128,6 +147,10 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
     (runtime / "journal").mkdir(mode=0o700)
     (runtime / "assets").mkdir(mode=0o700)
     driver: dict[str, Any] = {"attempt": attempt, "messages": [], "processes": {}, "fixtures": {}, "failure": None}
+    if restored is not None:
+        driver["seed"] = {"digest": restored.seed_digest, "armId": restored.arm_id,
+                          "notes": restored.seed.record["notes"], "gaps": restored.seed.record["gaps"],
+                          "completeness": restored.seed.record["completeness"]}
     dekopon: dict[str, Any] = {"version": artifacts.DEKOPON_VERSION, "source": artifacts.DEKOPON.source, "binaries": {}}
     providers: list[dict[str, Any]] = []
     collector_record: dict[str, Any] = {"image": artifacts.COLLECTOR_IMAGE}
@@ -151,8 +174,11 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
         scenarios.write_private(runtime / "collector.yaml", COLLECTOR_CONFIG)
         shutil.copyfile(runtime / "collector.yaml", bundle.path("config/collector.yaml"))
         collector.start()
-        model = fixtures["model"] = StubModel(scenario["model"]["completions"])
-        service = fixtures["service"] = Service(scenario["service"]["routes"])
+        model = fixtures["model"] = StubModel(scenario["model"]["completions"],
+                                               port=restored.model_port if restored is not None else 0,
+                                               summaries=scenario["model"].get("summaries"))
+        service = fixtures["service"] = Service(scenario["service"]["routes"],
+                                               port=restored.service_port if restored is not None else 0)
         model.start()
         service.start()
         config = scenarios.assemble(
@@ -164,10 +190,14 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
             collector_endpoint=collector.endpoint,
             uid=os.geteuid(),
         )
+        if restored is not None:
+            config = restored.apply(config)
+            restored.stage(runtime)
         # Refuse before any daemon starts: every HTTP grant and provider endpoint is the fixture.
         scenarios.check_assembled(config, scenario["providers"], service.authority)
         files = {
-            "catalog.json": json.dumps(config["catalog"], indent=2),
+            "catalog.json": restored.seed.files["config/catalog.json"].decode() if restored is not None
+                            else json.dumps(config["catalog"], indent=2),
             "policies.cedar": config["policies"],
             "broker.json": json.dumps(config["broker"], indent=2),
             "gateway.json": json.dumps(config["gateway"], indent=2),
@@ -190,9 +220,14 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
         broker = launch("broker", binaries["dekopon-brokerd"], "broker.json", BROKER_STOP_SECONDS)
         ready(runtime / "broker.sock", broker)
         drain = config["gateway"]["shutdownGraceMs"] / 1000 + DRAIN_MARGIN_SECONDS
+        if restored is not None:
+            restored.verify_staged(runtime)
         gateway = launch("gateway", binaries["dekopon-gatewayd"], "gateway.json", drain)
         ready(runtime / "local.sock", gateway)
         converse(runtime / "local.sock", scenario, driver["messages"])
+        if scenario["model"].get("summaries"):
+            wait_summaries(runtime, len(scenario["messages"]),
+                           {r["turn"] for r in restored.seed.record["journals"]} if restored is not None else set())
 
         # Gateway first: its SIGTERM drains sessions and flushes telemetry while broker,
         # fixtures and Collector are still up. Only a clean, unforced exit is a freeze.
@@ -201,7 +236,7 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
         started.clear()
         copied = copy_journal(runtime, bundle)
         gateway_record = driver["processes"]["gateway"]
-        if gateway_record["exitCode"] == 0 and not gateway_record["forcedKill"]:
+        if gateway_record["exitCode"] == 0 and not gateway_record["forcedKill"] and gateway_record["signal"] == "SIGTERM":
             stems = sorted(
                 path.relative_to(runtime / "journal").with_suffix("").as_posix()
                 for path in (runtime / "journal").rglob("*.jsonl")
@@ -237,7 +272,7 @@ def run(scenario_path: Path, output: Path, cache: Path) -> tuple[dict[str, Any],
         shutil.rmtree(runtime, ignore_errors=True)
 
     write_json(bundle.path("driver.json"), driver)
-    return finish(bundle, scenario, driver, dekopon, providers, collector_record, freeze)
+    return finish(bundle, scenario, driver, dekopon, providers, collector_record, freeze, restored=restored)
 
 
 def finish(
@@ -248,19 +283,33 @@ def finish(
     providers: list[dict[str, Any]],
     collector_record: dict[str, Any],
     freeze: dict[str, Any] | None,
+    *, restored: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Completeness, grade and the final manifest for a bundle whose evidence is on disk."""
     sent = len(scenario["messages"])
     try:
         result, export = completeness.check(bundle.root, sent, driver)
+        if restored is not None:
+            bundle.finalize(scenario_id=scenario["id"], dekopon=dekopon, providers=providers,
+                            collector=collector_record, freeze=freeze, loss_signals=[], gaps=[],
+                            completeness={"status": "incomplete", "reasons": [{"code": "first_projection_pending",
+                                            "detail": "first-projection comparison has not finished"}]})
+            driver["firstProjection"] = restored.check(bundle.root)
+            write_json(bundle.path("driver.json"), driver)
+            result["reasons"] = [r for r in result["reasons"] if not r["code"].startswith("first_projection_")]
+            result["reasons"].extend(r.to_json() for r in completeness.projection_failures(driver))
+            result["status"] = "incomplete" if result["reasons"] else "complete"
         graded = grade.grade(export, scenario["expect"]["rules"], result)
     except Exception as error:  # A finalization defect is still an unscored, finished attempt.
         detail = f"{type(error).__name__}: {error}"
         result = {"status": "incomplete", "reasons": [{"code": "finalization_error", "detail": detail}]}
         graded = {"gradeVersion": grade.GRADE_VERSION, "status": "infrastructure_error", "score": None,
                   "reasons": [f"finalization_error: {detail}"], "rules": []}
+    if restored is not None and "firstProjection" not in driver:
+        driver["firstProjection"] = restored.unavailable("finalization_error")
+        write_json(bundle.path("driver.json"), driver)
     write_json(bundle.path("grade.json"), graded)
-    gaps = list(STANDING_GAPS)
+    gaps = [gap for gap in STANDING_GAPS if restored is None or not gap.startswith("seedDigest:")]
     if not bundle.journal_files():
         gaps.append("journal: no journal file was copied")
     if freeze is None:
