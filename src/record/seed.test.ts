@@ -84,3 +84,15 @@ test('seed round-trip preserves multi-megabyte binary files without a parser sta
   if (!restored.ok) throw new Error(JSON.stringify(restored.errors));
   expect(Buffer.from(restored.files.get('stdout/gateway.stderr')!).equals(Buffer.from(binary))).toBe(true);
 });
+
+test('seed reader preserves all unknown-field notes beyond the function argument limit', async () => {
+  const seed = await envelope();
+  for (let i = 0; i < 130_000; i++) seed[`future${i}`] = null;
+  const result = await readSeed(encoder.encode(JSON.stringify(seed)));
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(JSON.stringify(result.errors));
+  const notes = result.record.notes.filter(note => note.kind === 'unknown-field' &&
+    note.at.path === 'dekopon-seed-v1.json');
+  expect(notes).toHaveLength(130_000);
+  expect(notes.every((note, i) => note.name === `future${i}`)).toBe(true);
+});

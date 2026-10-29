@@ -76,7 +76,7 @@ export async function readSeed(input: Uint8Array): Promise<ReadSeedResult> {
     if (result.record.freeze.state !== 'known') c.fail('seed-freeze', { path: 'manifest.json', field: 'freeze' });
     const allowed = reachable(result.record);
     if ([...files.keys()].some(path => !allowed.has(path))) c.fail('seed-shape', field(root, 'files'));
-    result.record.notes.unshift(...c.notes);
+    result.record.notes = [...c.notes, ...result.record.notes];
     return { ok: true, record: result.record, files, continuationMessages, seedDigest: await digest(bytes) };
   } catch (error) { return failure(error, c); }
 }
