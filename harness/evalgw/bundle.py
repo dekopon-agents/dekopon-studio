@@ -1,4 +1,4 @@
-"""Trial bundle v1: one exclusive directory per attempt with a versioned manifest (BUNDLE.md)."""
+"""Trial bundles v1 and v2: one exclusive directory per attempt with a versioned manifest (BUNDLE.md)."""
 
 from __future__ import annotations
 

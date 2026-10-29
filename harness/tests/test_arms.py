@@ -136,6 +136,9 @@ class SeedAndArmTest(unittest.TestCase):
         matched = projection.compare(self.seed, config, trial)
         self.assertEqual(matched['status'], 'matched')
         self.assertIsNone(matched['observedRecordIds'])
+        event['attributes']['memory.rung.native'] = True
+        self.assertEqual(projection.compare(self.seed, config, trial)['status'], 'mismatch')
+        event['attributes']['memory.rung.native'] = '1'
         call['completionSpans'] = []
         self.assertEqual(projection.compare(self.seed, config, trial)['reason'], 'first_model_complete_missing')
         call['completionSpans'] = [{'traceId': 'synthetic', 'spanId': 'complete'}]

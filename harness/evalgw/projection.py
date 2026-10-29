@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from .bridge import Seed, SeedError
+from .evidence import decimal
 
 
 def prefix(raw: bytes, limit: int) -> bytes:
@@ -244,9 +245,9 @@ def compare(seed: Seed, config: dict[str, Any], trial: dict[str, Any]) -> dict[s
     attributes = evidence[0]['attributes'] if len(evidence) == 1 else {}
     observed = attributes.get('memory.record.ids')
     observed_counts = {name: attributes.get('memory.rung.' + name) for name in ('native', 'summary', 'metadata')}
-    matched = matched and all(value is not None and int(value) == plan['rungCounts'][name]
+    matched = matched and all(decimal(value) == plan['rungCounts'][name]
                               for name, value in observed_counts.items())
-    matched = matched and attributes.get('memory.bytes') is not None and int(attributes['memory.bytes']) == plan['bytes']
+    matched = matched and decimal(attributes.get('memory.bytes')) == plan['bytes']
     if observed is not None:
         matched = matched and observed == plan['recordIds']
     notice = '\n'.join(m.get('content', '') for m in raw if m.get('role') == 'system')
